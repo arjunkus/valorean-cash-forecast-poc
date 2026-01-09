@@ -1,0 +1,24 @@
+# Cash Forecasting Intelligence System
+# Requirements for POC
+
+# Core Data Processing
+pandas>=2.0.0
+numpy>=1.24.0
+
+# Visualization
+plotly>=5.18.0
+streamlit>=1.29.0
+
+# Forecasting Models
+statsmodels>=0.14.0
+prophet>=1.1.4
+tensorflow>=2.15.0
+
+# Machine Learning & Analysis
+scikit-learn>=1.3.0
+shap>=0.44.0
+scipy>=1.11.0
+
+# Utilities
+joblib>=1.3.0
+python-dateutil>=2.8.0
