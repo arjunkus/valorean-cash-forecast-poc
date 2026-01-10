@@ -389,7 +389,7 @@ def main():
     init_session_state()
     render_sidebar()
     st.title("Cash Forecasting Intelligence")
-    tabs = st.tabs(["📊 Overview", "Overview", "Daily Position", "Forecasts", "Accuracy", "SHAP", "Outliers"])
+    tabs = st.tabs(["📊 Overview", "Daily Position", "Forecasts", "Accuracy", "SHAP", "Outliers"])
     with tabs[0]: render_overview()
     with tabs[1]: render_daily_position()
     with tabs[2]: render_forecasts()
