@@ -175,6 +175,31 @@ class DailyPositionManager:
         df = self.position_df
         return {'position_date': self.position_date, 'opening_balance': self.opening_balance_actual, 'closing_forecast': df[df['category'] == 'CLOSING_BALANCE'].iloc[0]['forecast'], 'closing_estimated': df[df['category'] == 'CLOSING_BALANCE'].iloc[0]['estimated_actual'], 'variance': df[df['category'] == 'CLOSING_BALANCE'].iloc[0]['variance'], 'posted_transactions': len([t for t in self.intraday_transactions if t.status == 'POSTED']), 'scheduled_payments': len(self.sap_scheduled_payments), 'last_updated': datetime.now()}
 
+    def get_accuracy_metrics(self):
+        """Calculate RMSE-based accuracy metrics for T+1 position."""
+        if self.position_df is None:
+            self.build_position()
+        
+        closing = self.position_df[self.position_df['category'] == 'CLOSING_BALANCE'].iloc[0]
+        forecast = closing['forecast']
+        actual = closing['estimated_actual']
+        
+        # Absolute Error (RMSE for single day = absolute error)
+        absolute_error = abs(actual - forecast)
+        
+        # Directional Bias: positive = overforecast, negative = underforecast
+        bias = forecast - actual
+        
+        return {
+            'date': self.position_date,
+            'forecast': forecast,
+            'actual': actual,
+            'absolute_error': absolute_error,
+            'bias': bias,
+            'bias_direction': 'OVER' if bias > 0 else 'UNDER' if bias < 0 else 'ACCURATE'
+        }
+
+
 def simulate_intraday_data(position_date, forecast_df=None):
     np.random.seed(position_date.day)
     bank_transactions = []

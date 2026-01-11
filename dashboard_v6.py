@@ -218,6 +218,17 @@ def render_daily_position():
     with col3: st.metric("Closing (Estimated)", format_currency(summary['closing_estimated']))
     with col4: st.metric("Variance", format_currency(summary['variance']))
     st.markdown("---")
+    st.subheader("Forecast Accuracy (RMSE)")
+    metrics = manager.get_accuracy_metrics()
+    col1, col2, col3 = st.columns(3)
+    with col1:
+        st.metric("Absolute Error", format_currency(metrics['absolute_error']))
+    with col2:
+        st.metric("Bias", format_currency(metrics['bias']), delta=metrics['bias_direction'], delta_color="inverse" if metrics['bias'] > 0 else "normal")
+    with col3:
+        accuracy_pct = (1 - abs(metrics['absolute_error']) / abs(metrics['forecast'])) * 100 if metrics['forecast'] != 0 else 0
+        st.metric("Accuracy", f"{accuracy_pct:.1f}%")
+    st.markdown("---")
     st.subheader("Position Worksheet")
     display_df = position[['display_name', 'forecast', 'estimated_actual', 'variance', 'status']].copy()
     display_df.columns = ['Category', 'Forecast', 'Estimated Actual', 'Variance', 'Status']
