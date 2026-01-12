@@ -198,6 +198,140 @@ class DailyPositionManager:
             'bias': bias,
             'bias_direction': 'OVER' if bias > 0 else 'UNDER' if bias < 0 else 'ACCURATE'
         }
+    def archive_position(self, storage_path='t1_position_history.parquet'):
+        """Archive the current day's position for historical RMSE calculation."""
+        if self.position_df is None:
+            self.build_position()
+        
+        metrics = self.get_accuracy_metrics()
+        summary = self.get_position_summary()
+        
+        archive_record = {
+            'position_date': self.position_date,
+            'opening_balance': self.opening_balance_actual,
+            'closing_forecast': metrics['forecast'],
+            'closing_actual': metrics['actual'],
+            'absolute_error': metrics['absolute_error'],
+            'bias': metrics['bias'],
+            'bias_direction': metrics['bias_direction'],
+            'posted_transactions': summary['posted_transactions'],
+            'scheduled_payments': summary['scheduled_payments'],
+            'archived_at': datetime.now()
+        }
+        
+        # Load existing history or create new
+        try:
+            history_df = pd.read_parquet(storage_path)
+            # Remove any existing record for this date (allow re-archiving)
+            history_df = history_df[history_df['position_date'].dt.date != self.position_date.date()]
+            history_df = pd.concat([history_df, pd.DataFrame([archive_record])], ignore_index=True)
+        except (FileNotFoundError, Exception):
+            history_df = pd.DataFrame([archive_record])
+        
+        history_df.to_parquet(storage_path, index=False)
+        return archive_record
+
+
+def get_historical_accuracy(storage_path='t1_position_history.parquet', days=30):
+    """Calculate RMSE and bias from historical T+1 positions."""
+    try:
+        history_df = pd.read_parquet(storage_path)
+    except (FileNotFoundError, Exception):
+        return None
+    
+    if len(history_df) == 0:
+        return None
+    
+    # Filter to recent days if specified
+    if days and len(history_df) > 0:
+        cutoff = datetime.now() - timedelta(days=days)
+        history_df = history_df[history_df['position_date'] >= cutoff]
+    
+    if len(history_df) == 0:
+        return None
+    
+    # Calculate RMSE: sqrt(mean(error^2))
+    rmse = np.sqrt((history_df['absolute_error'] ** 2).mean())
+    mean_bias = history_df['bias'].mean()
+    
+    return {
+        'days_analyzed': len(history_df),
+        'rmse': rmse,
+        'mean_absolute_error': history_df['absolute_error'].mean(),
+        'mean_bias': mean_bias,
+        'bias_direction': 'OVER' if mean_bias > 0 else 'UNDER' if mean_bias < 0 else 'NEUTRAL',
+        'best_day_error': history_df['absolute_error'].min(),
+        'worst_day_error': history_df['absolute_error'].max(),
+        'history': history_df
+    }
+
+    def archive_position(self, storage_path='t1_position_history.parquet'):
+        """Archive the current day's position for historical RMSE calculation."""
+        if self.position_df is None:
+            self.build_position()
+        
+        metrics = self.get_accuracy_metrics()
+        summary = self.get_position_summary()
+        
+        archive_record = {
+            'position_date': self.position_date,
+            'opening_balance': self.opening_balance_actual,
+            'closing_forecast': metrics['forecast'],
+            'closing_actual': metrics['actual'],
+            'absolute_error': metrics['absolute_error'],
+            'bias': metrics['bias'],
+            'bias_direction': metrics['bias_direction'],
+            'posted_transactions': summary['posted_transactions'],
+            'scheduled_payments': summary['scheduled_payments'],
+            'archived_at': datetime.now()
+        }
+        
+        # Load existing history or create new
+        try:
+            history_df = pd.read_parquet(storage_path)
+            # Remove any existing record for this date (allow re-archiving)
+            history_df = history_df[history_df['position_date'].dt.date != self.position_date.date()]
+            history_df = pd.concat([history_df, pd.DataFrame([archive_record])], ignore_index=True)
+        except (FileNotFoundError, Exception):
+            history_df = pd.DataFrame([archive_record])
+        
+        history_df.to_parquet(storage_path, index=False)
+        return archive_record
+
+
+def get_historical_accuracy(storage_path='t1_position_history.parquet', days=30):
+    """Calculate RMSE and bias from historical T+1 positions."""
+    try:
+        history_df = pd.read_parquet(storage_path)
+    except (FileNotFoundError, Exception):
+        return None
+    
+    if len(history_df) == 0:
+        return None
+    
+    # Filter to recent days if specified
+    if days and len(history_df) > 0:
+        cutoff = datetime.now() - timedelta(days=days)
+        history_df = history_df[history_df['position_date'] >= cutoff]
+    
+    if len(history_df) == 0:
+        return None
+    
+    # Calculate RMSE: sqrt(mean(error^2))
+    rmse = np.sqrt((history_df['absolute_error'] ** 2).mean())
+    mean_bias = history_df['bias'].mean()
+    
+    return {
+        'days_analyzed': len(history_df),
+        'rmse': rmse,
+        'mean_absolute_error': history_df['absolute_error'].mean(),
+        'mean_bias': mean_bias,
+        'bias_direction': 'OVER' if mean_bias > 0 else 'UNDER' if mean_bias < 0 else 'NEUTRAL',
+        'best_day_error': history_df['absolute_error'].min(),
+        'worst_day_error': history_df['absolute_error'].max(),
+        'history': history_df
+    }
+
 
 
 def simulate_intraday_data(position_date, forecast_df=None):

@@ -31,7 +31,7 @@ from config import TIME_HORIZONS, MAPE_THRESHOLDS
 from data_simulator_v3 import generate_category_data
 from models_prophet_v6 import ProphetCashForecaster, ForecastAnalyzer, USBankingCalendar
 from analysis_v3 import SHAPAnalyzer, OutlierDetector
-from daily_position import DailyPositionManager, simulate_intraday_data
+from daily_position import DailyPositionManager, simulate_intraday_data, get_historical_accuracy
 
 INFLOW_COLORS = {'AR': '#27ae60', 'INV_INC': '#2ecc71', 'IC_IN': '#1abc9c'}
 OUTFLOW_COLORS = {'PAYROLL': '#e74c3c', 'AP': '#c0392b', 'TAX': '#9b59b6', 'CAPEX': '#f39c12', 'DEBT': '#e67e22', 'IC_OUT': '#d35400'}
@@ -220,14 +220,46 @@ def render_daily_position():
     st.markdown("---")
     st.subheader("Forecast Accuracy (RMSE)")
     metrics = manager.get_accuracy_metrics()
-    col1, col2, col3 = st.columns(3)
+    col1, col2, col3, col4 = st.columns(4)
     with col1:
-        st.metric("Absolute Error", format_currency(metrics['absolute_error']))
+        st.metric("Today's Error", format_currency(metrics['absolute_error']))
     with col2:
-        st.metric("Bias", format_currency(metrics['bias']), delta=metrics['bias_direction'], delta_color="inverse" if metrics['bias'] > 0 else "normal")
+        st.metric("Today's Bias", format_currency(metrics['bias']), delta=metrics['bias_direction'], delta_color="inverse" if metrics['bias'] > 0 else "normal")
     with col3:
         accuracy_pct = (1 - abs(metrics['absolute_error']) / abs(metrics['forecast'])) * 100 if metrics['forecast'] != 0 else 0
-        st.metric("Accuracy", f"{accuracy_pct:.1f}%")
+        st.metric("Today's Accuracy", f"{accuracy_pct:.1f}%")
+    with col4:
+        historical = get_historical_accuracy(days=None)
+        if historical:
+            st.metric("30-Day RMSE", format_currency(historical['rmse']), delta=f"{historical['days_analyzed']} days")
+        else:
+            st.metric("30-Day RMSE", "No history", delta="Archive to build")
+    
+    # Archive button
+    col1, col2 = st.columns([1, 3])
+    with col1:
+        if st.button("📁 Archive Today", help="Save today's forecast vs actual for historical tracking"):
+            manager.archive_position()
+            st.success(f"Archived {position_date.strftime('%Y-%m-%d')}")
+            st.rerun()
+    with col2:
+        historical = get_historical_accuracy(days=None)
+        if historical:
+            st.caption(f"Historical: {historical['days_analyzed']} days tracked | Mean Bias: {format_currency(historical['mean_bias'])} ({historical['bias_direction']})")
+    
+    # Show archived history
+    historical = get_historical_accuracy(days=None)
+    if historical and len(historical['history']) > 0:
+        with st.expander("📊 View Archived History", expanded=False):
+            hist_df = historical['history'].copy()
+            hist_df['position_date'] = hist_df['position_date'].dt.strftime('%Y-%m-%d')
+            hist_df['archived_at'] = hist_df['archived_at'].dt.strftime('%Y-%m-%d %H:%M')
+            display_cols = ['position_date', 'closing_forecast', 'closing_actual', 'absolute_error', 'bias', 'bias_direction']
+            display_df = hist_df[display_cols].copy()
+            display_df.columns = ['Date', 'Forecast', 'Actual', 'Error', 'Bias', 'Direction']
+            for col in ['Forecast', 'Actual', 'Error', 'Bias']:
+                display_df[col] = display_df[col].apply(lambda x: f"${x:,.0f}")
+            st.dataframe(display_df, use_container_width=True, hide_index=True)
     st.markdown("---")
     st.subheader("Position Worksheet")
     display_df = position[['display_name', 'forecast', 'estimated_actual', 'variance', 'status']].copy()
