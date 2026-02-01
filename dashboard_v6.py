@@ -163,19 +163,335 @@ def render_sidebar():
         st.sidebar.metric("T0", st.session_state.forecaster.last_actual_date.strftime('%Y-%m-%d'))
         st.sidebar.metric("Balance", f"${st.session_state.forecaster.last_actual_closing_balance:,.0f}")
 
+def _card_css():
+    """Inject consistent card styling (called once)."""
+    st.markdown("""
+    <style>
+    .exec-header {
+        display: flex; justify-content: space-between; align-items: baseline;
+        border-bottom: 2px solid #3498db; padding-bottom: 6px; margin-bottom: 18px;
+    }
+    .exec-header h2 { margin: 0; font-size: 1.4rem; color: #2c3e50; }
+    .exec-header .timestamp { font-size: 0.85rem; color: #7f8c8d; }
+    .section-card {
+        border: 1px solid #e0e0e0; border-radius: 8px; padding: 16px 20px;
+        margin-bottom: 12px; background: #fafbfc;
+    }
+    .section-card h3 {
+        margin: 0 0 10px 0; font-size: 1.05rem; color: #2c3e50;
+        border-bottom: 1px solid #ecf0f1; padding-bottom: 6px;
+    }
+    .alert-row { padding: 6px 0; font-size: 0.95rem; }
+    </style>
+    """, unsafe_allow_html=True)
+
+
 def render_overview():
     if not st.session_state.data_loaded:
         st.info("Click Load Data & Train")
         return
+
+    _card_css()
     forecaster = st.session_state.forecaster
     results = st.session_state.backtest_results
-    col1, col2, col3, col4 = st.columns(4)
-    with col1: st.metric("T0 Balance", f"${forecaster.last_actual_closing_balance:,.0f}")
-    with col2: st.metric("T0 Date", forecaster.last_actual_date.strftime('%Y-%m-%d'))
-    with col3:
-        if 'T+7' in results: st.metric("T+7 MAPE", f"{results['T+7']['balance_mape']:.2f}%", results['T+7']['rating'])
-    with col4:
-        if 'T+30' in results: st.metric("T+30 MAPE", f"{results['T+30']['balance_mape']:.2f}%", results['T+30']['rating'])
+    t0_date = forecaster.last_actual_date
+    t0_balance = forecaster.last_actual_closing_balance
+
+    # --- Header with timestamp ---
+    st.markdown(
+        f'<div class="exec-header">'
+        f'<h2>Executive Cash Position Summary</h2>'
+        f'<span class="timestamp">Last updated: {datetime.now().strftime("%Y-%m-%d %H:%M:%S")}  '
+        f'&nbsp;|&nbsp; T0: {t0_date.strftime("%Y-%m-%d")}</span>'
+        f'</div>',
+        unsafe_allow_html=True,
+    )
+
+    # =================================================================
+    # 1. TODAY'S POSITION
+    # =================================================================
+    position_date = t0_date.to_pydatetime() + timedelta(days=1)
+    while position_date.weekday() >= 5:
+        position_date += timedelta(days=1)
+    t7_forecast = forecaster.predict('T+7')['T+7']
+    manager = DailyPositionManager()
+    manager.initialize_position(position_date, t0_balance, t7_forecast)
+    intraday = simulate_intraday_data(position_date, t7_forecast)
+    manager.load_intraday_from_bank(intraday['bank_transactions'])
+    manager.load_sap_payment_queue(intraday['sap_payments'])
+    manager.build_position()
+    summary = manager.get_position_summary()
+    rec = manager.get_investment_borrowing_recommendation()
+
+    net_change = summary['closing_estimated'] - summary['opening_balance']
+
+    with st.container(border=True):
+        st.markdown(f"### Today's Position &mdash; {position_date.strftime('%A, %b %d %Y')}")
+        c1, c2, c3, c4 = st.columns(4)
+        with c1:
+            st.metric("Opening Balance", f"${summary['opening_balance']:,.0f}")
+        with c2:
+            st.metric("Projected Closing", f"${summary['closing_estimated']:,.0f}")
+        with c3:
+            delta_color = "normal" if net_change >= 0 else "inverse"
+            st.metric("Net Change", f"${net_change:,.0f}",
+                       delta=f"${net_change:,.0f}", delta_color=delta_color)
+        with c4:
+            conf_icon = {"HIGH": "🟢", "MEDIUM": "🟡", "LOW": "🔴"}.get(rec['confidence'], "⚪")
+            st.metric("Confidence", f"{conf_icon} {rec['confidence']}")
+        # Action strip
+        if rec['action'] == 'INVEST':
+            st.success(f"**Recommendation:** INVEST ${rec['amount']:,.0f} — {rec['reasoning']}")
+        elif rec['action'] == 'BORROW':
+            st.error(f"**Recommendation:** BORROW ${rec['amount']:,.0f} — {rec['reasoning']}")
+        else:
+            st.info(f"**Recommendation:** HOLD — {rec['reasoning']}")
+
+    # =================================================================
+    # 2. T+1 SNAPSHOT  |  3. T+7 SNAPSHOT  (side by side)
+    # =================================================================
+    col_left, col_right = st.columns(2)
+
+    # --- T+1 ---
+    with col_left:
+        with st.container(border=True):
+            st.markdown("### T+1 Snapshot")
+            m1, m2 = st.columns(2)
+            with m1:
+                st.metric("Forecast Close", f"${summary['closing_forecast']:,.0f}")
+                st.metric("Estimated Actual", f"${summary['closing_estimated']:,.0f}")
+            with m2:
+                variance = summary['variance']
+                var_icon = "🟢" if abs(variance) < 1_000_000 else "🟡" if abs(variance) < 5_000_000 else "🔴"
+                st.metric("Variance", f"${variance:,.0f}",
+                           delta=f"{var_icon} {'Over' if variance > 0 else 'Under'}")
+                action_colors = {'INVEST': '🟢', 'BORROW': '🔴', 'HOLD': '🔵'}
+                st.metric("Action", f"{action_colors.get(rec['action'], '')} {rec['action']}")
+            st.caption(f"Posted: {summary['posted_transactions']} txns  |  Scheduled: {summary['scheduled_payments']} payments")
+
+    # --- T+7 ---
+    with col_right:
+        with st.container(border=True):
+            st.markdown("### T+7 Cash Trajectory")
+            t7 = t7_forecast.sort_values('date').copy()
+            fig7 = go.Figure()
+            # Inflow/outflow bars
+            fig7.add_trace(go.Bar(
+                x=t7['date'], y=t7['forecast_inflow'], name='Inflows',
+                marker_color='#27ae60', opacity=0.7,
+            ))
+            fig7.add_trace(go.Bar(
+                x=t7['date'], y=-t7['forecast_outflow'], name='Outflows',
+                marker_color='#e74c3c', opacity=0.7,
+            ))
+            # Balance line
+            fig7.add_trace(go.Scatter(
+                x=t7['date'], y=t7['closing_balance'], name='Balance',
+                mode='lines+markers', line=dict(color='#3498db', width=3),
+                yaxis='y2',
+            ))
+            # Min / Max annotations
+            min_idx = t7['closing_balance'].idxmin()
+            max_idx = t7['closing_balance'].idxmax()
+            min_row = t7.loc[min_idx]
+            max_row = t7.loc[max_idx]
+            fig7.add_annotation(
+                x=min_row['date'], y=min_row['closing_balance'],
+                text=f"Min: ${min_row['closing_balance']:,.0f}",
+                showarrow=True, arrowhead=2, arrowcolor='#e74c3c',
+                font=dict(color='#e74c3c', size=11, family='Arial Black'),
+                bgcolor='white', bordercolor='#e74c3c', borderwidth=1, borderpad=3,
+                ax=0, ay=40, yref='y2',
+            )
+            fig7.add_annotation(
+                x=max_row['date'], y=max_row['closing_balance'],
+                text=f"Max: ${max_row['closing_balance']:,.0f}",
+                showarrow=True, arrowhead=2, arrowcolor='#27ae60',
+                font=dict(color='#27ae60', size=11, family='Arial Black'),
+                bgcolor='white', bordercolor='#27ae60', borderwidth=1, borderpad=3,
+                ax=0, ay=-40, yref='y2',
+            )
+            fig7.update_layout(
+                height=300, margin=dict(l=0, r=0, t=10, b=0),
+                barmode='relative',
+                yaxis=dict(title='Cash Flow ($)', tickformat='$,.0f', showgrid=False),
+                yaxis2=dict(title='Balance ($)', tickformat='$,.0f', overlaying='y',
+                            side='right', showgrid=True, gridcolor='#ecf0f1'),
+                legend=dict(orientation='h', y=-0.25, x=0.5, xanchor='center'),
+                hovermode='x unified',
+            )
+            st.plotly_chart(fig7, use_container_width=True, key='overview_t7')
+
+    # =================================================================
+    # 4. T+30 MONTHLY OUTLOOK
+    # =================================================================
+    with st.container(border=True):
+        st.markdown("### T+30 Monthly Outlook")
+        t30 = forecaster.predict('T+30')['T+30'].sort_values('date').copy()
+
+        fig30 = make_subplots(specs=[[{"secondary_y": True}]])
+
+        # Inflow / outflow bars
+        fig30.add_trace(go.Bar(
+            x=t30['date'], y=t30['forecast_inflow'], name='Inflows',
+            marker_color='#27ae60', opacity=0.7,
+        ), secondary_y=False)
+        fig30.add_trace(go.Bar(
+            x=t30['date'], y=-t30['forecast_outflow'], name='Outflows',
+            marker_color='#e74c3c', opacity=0.7,
+        ), secondary_y=False)
+
+        # Balance line on secondary axis
+        fig30.add_trace(go.Scatter(
+            x=t30['date'], y=t30['closing_balance'], name='Closing Balance',
+            mode='lines+markers', line=dict(color='#3498db', width=3),
+            marker=dict(size=4),
+        ), secondary_y=True)
+
+        # Min / Max balance annotations
+        min30_idx = t30['closing_balance'].idxmin()
+        max30_idx = t30['closing_balance'].idxmax()
+        min30_row = t30.loc[min30_idx]
+        max30_row = t30.loc[max30_idx]
+        fig30.add_annotation(
+            x=min30_row['date'], y=min30_row['closing_balance'],
+            text=f"Min: ${min30_row['closing_balance']:,.0f}",
+            showarrow=True, arrowhead=2, arrowcolor='#e74c3c',
+            font=dict(color='#e74c3c', size=11, family='Arial Black'),
+            bgcolor='white', bordercolor='#e74c3c', borderwidth=1, borderpad=3,
+            ax=0, ay=40, yref='y2',
+        )
+        fig30.add_annotation(
+            x=max30_row['date'], y=max30_row['closing_balance'],
+            text=f"Max: ${max30_row['closing_balance']:,.0f}",
+            showarrow=True, arrowhead=2, arrowcolor='#27ae60',
+            font=dict(color='#27ae60', size=11, family='Arial Black'),
+            bgcolor='white', bordercolor='#27ae60', borderwidth=1, borderpad=3,
+            ax=0, ay=-40, yref='y2',
+        )
+
+        # Subtle vertical markers for key payment dates
+        marker_configs = [
+            ('PAYROLL', '#e74c3c', 'Payroll'),
+            ('DEBT', '#e67e22', 'Debt Svc'),
+            ('TAX', '#9b59b6', 'Tax'),
+        ]
+        bal_max = t30['closing_balance'].max()
+        for col_name, color, label in marker_configs:
+            key_dates = t30[t30[col_name] > 0]
+            for _, row in key_dates.iterrows():
+                fig30.add_vline(
+                    x=row['date'].timestamp() * 1000,
+                    line_width=1, line_dash='dot', line_color=color, opacity=0.4,
+                )
+                fig30.add_annotation(
+                    x=row['date'], y=bal_max,
+                    text=label, showarrow=False,
+                    font=dict(size=8, color=color),
+                    yshift=12, textangle=-45, yref='y2',
+                )
+
+        # Tight Y-axis range for balance (15% padding)
+        bal_min = t30['closing_balance'].min()
+        bal_range = bal_max - bal_min if bal_max != bal_min else bal_max * 0.1
+        pad = bal_range * 0.15
+        fig30.update_yaxes(
+            title_text='Cash Flow ($)', tickformat='$,.0f', showgrid=False,
+            secondary_y=False,
+        )
+        fig30.update_yaxes(
+            title_text='Balance ($)', tickformat='$,.0f',
+            range=[bal_min - pad, bal_max + pad],
+            showgrid=True, gridcolor='#ecf0f1',
+            secondary_y=True,
+        )
+
+        # Min-balance threshold line
+        fig30.add_hline(y=5_000_000, line_dash='dash', line_color='#e74c3c', opacity=0.4,
+                         annotation_text='Min ($5M)', annotation_position='bottom right',
+                         annotation_font_size=9, annotation_font_color='#e74c3c',
+                         secondary_y=True)
+
+        fig30.update_layout(
+            height=400, margin=dict(l=0, r=0, t=10, b=0),
+            barmode='relative',
+            xaxis=dict(tickformat='%b %d'),
+            legend=dict(orientation='h', y=-0.18, x=0.5, xanchor='center'),
+            hovermode='x unified',
+        )
+        st.plotly_chart(fig30, use_container_width=True, key='overview_t30')
+
+        # Summary row
+        s1, s2, s3, s4 = st.columns(4)
+        with s1:
+            st.metric("Total Inflows", f"${t30['forecast_inflow'].sum():,.0f}")
+        with s2:
+            st.metric("Total Outflows", f"${t30['forecast_outflow'].sum():,.0f}")
+        with s3:
+            st.metric("Ending Balance", f"${t30['closing_balance'].iloc[-1]:,.0f}")
+        with s4:
+            pct_change = (t30['closing_balance'].iloc[-1] - t0_balance) / t0_balance * 100
+            st.metric("30-Day Change", f"{pct_change:+.1f}%")
+
+    # =================================================================
+    # 5. ALERTS & RISK INDICATORS
+    # =================================================================
+    with st.container(border=True):
+        st.markdown("### Alerts & Risk Indicators")
+        alerts = []
+
+        # Alert: T+1 large variance
+        t1_abs_var = abs(summary['variance'])
+        if t1_abs_var > 5_000_000:
+            alerts.append(('critical', f"T+1 variance is ${t1_abs_var:,.0f} — exceeds $5M threshold"))
+        elif t1_abs_var > 2_000_000:
+            alerts.append(('warning', f"T+1 variance is ${t1_abs_var:,.0f} — exceeds $2M threshold"))
+
+        # Alert: Low cash in T+7 window
+        t7_min = t7['closing_balance'].min()
+        t7_min_date = t7.loc[t7['closing_balance'].idxmin(), 'date']
+        if t7_min < 5_000_000:
+            alerts.append(('critical', f"Cash drops below $5M minimum on {t7_min_date.strftime('%b %d')} (${t7_min:,.0f})"))
+        elif t7_min < 10_000_000:
+            alerts.append(('warning', f"Cash approaches minimum on {t7_min_date.strftime('%b %d')} (${t7_min:,.0f})"))
+
+        # Alert: Low cash in T+30 window
+        t30_min = t30['closing_balance'].min()
+        t30_min_date = t30.loc[t30['closing_balance'].idxmin(), 'date']
+        if t30_min < 5_000_000:
+            alerts.append(('critical', f"30-day outlook: cash below $5M on {t30_min_date.strftime('%b %d')} (${t30_min:,.0f})"))
+
+        # Alert: Concentration risk — single outflow category > 40% of total on any T+7 day
+        outflow_cats = ['PAYROLL', 'AP', 'TAX', 'DEBT', 'IC_OUT']
+        for _, row in t7.iterrows():
+            total_out = row['forecast_outflow']
+            if total_out == 0:
+                continue
+            for cat in outflow_cats:
+                if cat in row and row[cat] / total_out > 0.40:
+                    alerts.append(('warning',
+                        f"Concentration risk: {cat} is {row[cat]/total_out:.0%} of outflows "
+                        f"on {row['date'].strftime('%b %d')} (${row[cat]:,.0f} / ${total_out:,.0f})"))
+                    break  # one alert per day max
+            else:
+                continue
+            break  # surface only the first concentration day
+
+        # Alert: Model accuracy degradation
+        for hz in ['T+7', 'T+30']:
+            if hz in results and results[hz]['rating'] == 'Poor':
+                alerts.append(('warning', f"{hz} model accuracy rated POOR (MAPE {results[hz]['balance_mape']:.1f}%) — consider retraining"))
+
+        # Render alerts
+        if not alerts:
+            st.markdown('<div class="alert-row">✅ &nbsp; <b>All clear</b> — No warnings or critical alerts.</div>',
+                        unsafe_allow_html=True)
+        else:
+            for level, msg in alerts:
+                if level == 'critical':
+                    st.error(f"🔴 {msg}")
+                else:
+                    st.warning(f"⚠️ {msg}")
 
 def render_daily_position():
     if not st.session_state.data_loaded:
