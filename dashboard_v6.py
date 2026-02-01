@@ -27,6 +27,16 @@ INFLOW_COLORS = {'AR': '#27ae60', 'INV_INC': '#2ecc71', 'IC_IN': '#1abc9c'}
 OUTFLOW_COLORS = {'PAYROLL': '#e74c3c', 'AP': '#c0392b', 'TAX': '#9b59b6', 'CAPEX': '#f39c12', 'DEBT': '#e67e22', 'IC_OUT': '#d35400'}
 DOW_NAMES = ['Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday']
 
+def _fmt(value):
+    """Format large dollar amounts: $226.1M, $45.2K, $3,200."""
+    v = abs(value)
+    sign = '-' if value < 0 else ''
+    if v >= 1_000_000:
+        return f"{sign}${v / 1_000_000:,.1f}M"
+    if v >= 1_000:
+        return f"{sign}${v / 1_000:,.1f}K"
+    return f"{sign}${v:,.0f}"
+
 def init_session_state():
     for key, val in {'data_loaded': False, 'daily_cash': None, 'category_df': None, 'forecaster': None, 'forecasts': None, 'backtest_results': None, 'shap_results': None, 'outlier_results': None, 'capex_schedule': {}}.items():
         if key not in st.session_state:
@@ -647,15 +657,215 @@ def render_forecasts():
         if st.button("Clear"): st.session_state.capex_schedule = {}; st.rerun()
     st.markdown("---")
     forecasts = forecaster.predict(horizon, capex_schedule=st.session_state.capex_schedule)
-    fcast = forecasts[horizon].sort_values('date', ascending=True)
-    col1, col2, col3, col4, col5 = st.columns(5)
-    with col1: st.metric("Opening", f"${forecaster.last_actual_closing_balance:,.0f}")
-    with col2: st.metric("+ Receipts", f"${fcast['forecast_inflow'].sum():,.0f}")
-    with col3: st.metric("- Payments", f"${fcast['forecast_outflow_ex_capex'].sum():,.0f}")
-    with col4: st.metric("- CAPEX", f"${fcast['CAPEX'].sum():,.0f}")
-    with col5: st.metric("= Closing", f"${fcast['closing_balance'].iloc[-1]:,.0f}")
-    fig = create_category_chart(fcast, horizon)
-    st.plotly_chart(fig, use_container_width=True)
+    fcast = forecasts[horizon].sort_values('date', ascending=True).copy()
+
+    MIN_BALANCE_THRESHOLD = 5_000_000
+    inflow_cats = ['AR', 'INV_INC', 'IC_IN']
+    outflow_cats = ['PAYROLL', 'AP', 'TAX', 'DEBT', 'IC_OUT']
+
+    # ── Derived columns ──
+    fcast['net_flow'] = fcast['forecast_inflow'] - fcast['forecast_outflow']
+
+    # ── Find lowest balance day & largest single outflow ──
+    low_idx = fcast['closing_balance'].idxmin()
+    high_idx = fcast['closing_balance'].idxmax()
+    low_row = fcast.loc[low_idx]
+    high_row = fcast.loc[high_idx]
+
+    largest_out_val, largest_out_cat, largest_out_date = 0, '', None
+    for _, r in fcast.iterrows():
+        for cat in outflow_cats + ['CAPEX']:
+            if cat in r and r[cat] > largest_out_val:
+                largest_out_val, largest_out_cat, largest_out_date = r[cat], cat, r['date']
+
+    # =================================================================
+    # 1. KEY METRICS
+    # =================================================================
+    with st.container(border=True):
+        st.markdown(f"### {horizon} Key Metrics")
+        c1, c2, c3, c4, c5, c6, c7 = st.columns(7)
+        with c1:
+            st.metric("Starting Balance", _fmt(fcast['opening_balance'].iloc[0]))
+        with c2:
+            end_bal = fcast['closing_balance'].iloc[-1]
+            st.metric("Ending Balance", _fmt(end_bal))
+        with c3:
+            st.metric("Total Inflows", _fmt(fcast['forecast_inflow'].sum()))
+        with c4:
+            st.metric("Total Outflows", _fmt(fcast['forecast_outflow'].sum()))
+        with c5:
+            net = fcast['net_flow'].sum()
+            st.metric("Net Change", _fmt(net),
+                       delta=_fmt(net),
+                       delta_color="normal" if net >= 0 else "inverse")
+        with c6:
+            low_icon = "🔴 " if low_row['closing_balance'] < MIN_BALANCE_THRESHOLD else ""
+            st.metric("Lowest Balance",
+                       _fmt(low_row['closing_balance']),
+                       delta=f"{low_icon}{low_row['date'].strftime('%b %d (%a)')}")
+        with c7:
+            st.metric("Largest Outflow",
+                       _fmt(largest_out_val),
+                       delta=f"{largest_out_cat} — {largest_out_date.strftime('%b %d') if largest_out_date else ''}")
+
+        if low_row['closing_balance'] < MIN_BALANCE_THRESHOLD:
+            st.error(f"🔴 Balance drops below ${MIN_BALANCE_THRESHOLD/1e6:.0f}M minimum on "
+                     f"{low_row['date'].strftime('%b %d')} ({_fmt(low_row['closing_balance'])})")
+
+    # =================================================================
+    # 2. CASH TRAJECTORY CHART (single Y-axis, candlestick bars + line)
+    # =================================================================
+    with st.container(border=True):
+        st.markdown(f"### {horizon} Cash Trajectory")
+        fig_traj = go.Figure()
+
+        # Synthesize intraday high/low from opening + cumulative inflows/outflows
+        # High = opening + inflows (peak before outflows settle)
+        # Low  = opening - outflows (trough before inflows settle)
+        fcast_high = fcast['opening_balance'] + fcast['forecast_inflow']
+        fcast_low = fcast['opening_balance'] - fcast['forecast_outflow']
+
+        # Candlestick: open/high/low/close per day (like a stock chart)
+        fig_traj.add_trace(go.Candlestick(
+            x=fcast['date'],
+            open=fcast['opening_balance'],
+            high=fcast_high,
+            low=fcast_low,
+            close=fcast['closing_balance'],
+            name='Daily Range',
+            increasing_line_color='#27ae60', increasing_fillcolor='rgba(39,174,96,0.3)',
+            decreasing_line_color='#e74c3c', decreasing_fillcolor='rgba(231,76,60,0.3)',
+        ))
+
+        # Closing balance line on top
+        fig_traj.add_trace(go.Scatter(
+            x=fcast['date'], y=fcast['closing_balance'], name='Closing Balance',
+            mode='lines+markers', line=dict(color='#3498db', width=3),
+            marker=dict(size=7, color='#3498db'),
+        ))
+
+        # Min threshold band + line
+        fig_traj.add_hrect(
+            y0=0, y1=MIN_BALANCE_THRESHOLD,
+            fillcolor='rgba(231,76,60,0.07)', line_width=0,
+        )
+        fig_traj.add_hline(
+            y=MIN_BALANCE_THRESHOLD, line_dash='dash', line_color='#e74c3c', opacity=0.5,
+            annotation_text=f'Min ({_fmt(MIN_BALANCE_THRESHOLD)})',
+            annotation_position='bottom right',
+            annotation_font_size=9, annotation_font_color='#e74c3c',
+        )
+
+        # Min / Max annotations
+        fig_traj.add_annotation(
+            x=low_row['date'], y=low_row['closing_balance'],
+            text=f"Low: {_fmt(low_row['closing_balance'])}<br>{low_row['date'].strftime('%b %d')}",
+            showarrow=True, arrowhead=2, arrowcolor='#e74c3c',
+            font=dict(color='#e74c3c', size=11, family='Arial Black'),
+            bgcolor='white', bordercolor='#e74c3c', borderwidth=1, borderpad=3,
+            ax=-60, ay=40,
+        )
+        fig_traj.add_annotation(
+            x=high_row['date'], y=high_row['closing_balance'],
+            text=f"High: {_fmt(high_row['closing_balance'])}<br>{high_row['date'].strftime('%b %d')}",
+            showarrow=True, arrowhead=2, arrowcolor='#27ae60',
+            font=dict(color='#27ae60', size=11, family='Arial Black'),
+            bgcolor='white', bordercolor='#27ae60', borderwidth=1, borderpad=3,
+            ax=60, ay=-40,
+        )
+
+        # Tight Y-axis covering full high/low range (never start at zero)
+        all_vals = pd.concat([fcast_low, fcast_high, fcast['closing_balance']])
+        bal_min, bal_max = all_vals.min(), all_vals.max()
+        bal_range = bal_max - bal_min if bal_max != bal_min else bal_max * 0.1
+        pad = bal_range * 0.10
+        fig_traj.update_layout(
+            height=450, margin=dict(l=0, r=0, t=10, b=0),
+            yaxis=dict(title='Cash Position ($)', tickformat='$,.0f',
+                       range=[bal_min - pad, bal_max + pad],
+                       gridcolor='#ecf0f1'),
+            xaxis=dict(tickformat='%b %d (%a)', rangeslider=dict(visible=False)),
+            legend=dict(orientation='h', y=-0.15, x=0.5, xanchor='center'),
+            hovermode='x unified',
+        )
+        st.plotly_chart(fig_traj, use_container_width=True, key='fcast_trajectory')
+
+    # =================================================================
+    # 4. DAILY DETAIL TABLE
+    # =================================================================
+    with st.container(border=True):
+        st.markdown(f"### {horizon} Daily Detail")
+        tbl = fcast[['date', 'day_name', 'opening_balance', 'forecast_inflow',
+                      'forecast_outflow', 'net_flow', 'closing_balance']].copy()
+        tbl.columns = ['Date', 'Day', 'Opening', 'Inflows', 'Outflows', 'Net', 'Closing']
+        tbl['Date'] = tbl['Date'].dt.strftime('%Y-%m-%d')
+
+        # Build flags column
+        flags = []
+        for _, r in fcast.iterrows():
+            parts = []
+            if r['closing_balance'] < MIN_BALANCE_THRESHOLD:
+                parts.append('🔴 Below min')
+            if r['net_flow'] < 0:
+                parts.append('📉 Neg net')
+            if 'is_payroll_day' in r and r.get('is_payroll_day'):
+                parts.append('💰 Payroll')
+            # Concentration check
+            total_out = r['forecast_outflow']
+            if total_out > 0:
+                for cat in outflow_cats + ['CAPEX']:
+                    if cat in r and r[cat] / total_out > 0.40:
+                        parts.append(f'⚠️ {cat} {r[cat]/total_out:.0%}')
+                        break
+            flags.append(' | '.join(parts) if parts else '')
+        tbl['Flags'] = flags
+
+        for c in ['Opening', 'Inflows', 'Outflows', 'Net', 'Closing']:
+            tbl[c] = tbl[c].apply(lambda x: f"${x:,.0f}")
+
+        st.dataframe(tbl, use_container_width=True, hide_index=True,
+                      height=min(450, 35 * len(tbl) + 38))
+
+    # =================================================================
+    # 5. VARIANCE / RISK INDICATORS
+    # =================================================================
+    with st.container(border=True):
+        st.markdown(f"### {horizon} Risk Indicators")
+        risks = []
+
+        # Below-threshold days
+        below_days = fcast[fcast['closing_balance'] < MIN_BALANCE_THRESHOLD]
+        for _, r in below_days.iterrows():
+            risks.append(('critical',
+                f"Balance ${r['closing_balance']:,.0f} on {r['date'].strftime('%b %d (%a)')} "
+                f"— below ${MIN_BALANCE_THRESHOLD/1e6:.0f}M minimum"))
+
+        # Concentration risk per day
+        for _, r in fcast.iterrows():
+            total_out = r['forecast_outflow']
+            if total_out == 0:
+                continue
+            for cat in outflow_cats + ['CAPEX']:
+                if cat in r and r[cat] / total_out > 0.40:
+                    risks.append(('warning',
+                        f"Concentration: {cat} is {r[cat]/total_out:.0%} of outflows on "
+                        f"{r['date'].strftime('%b %d')} (${r[cat]:,.0f} / ${total_out:,.0f})"))
+                    break
+
+        # Large negative net flow days
+        big_neg = fcast[fcast['net_flow'] < -fcast['forecast_outflow'].mean()]
+        for _, r in big_neg.iterrows():
+            risks.append(('warning',
+                f"Large net outflow ${r['net_flow']:,.0f} on {r['date'].strftime('%b %d (%a)')}"))
+
+        if not risks:
+            st.success("✅ No risk indicators — all days within normal parameters.")
+        else:
+            for level, msg in risks:
+                if level == 'critical':
+                    st.error(f"🔴 {msg}")
+                else:
+                    st.warning(f"⚠️ {msg}")
 
 def render_accuracy():
     if not st.session_state.data_loaded:
