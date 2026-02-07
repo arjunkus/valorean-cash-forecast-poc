@@ -10,4 +10,4 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - name: Ping Streamlit App
-        run: curl -s https://valorean-cash-forecast-poc.streamlit.app > /dev/null
+        run: curl -s https://valorean-cash-forecast-poc.streamlit.app
