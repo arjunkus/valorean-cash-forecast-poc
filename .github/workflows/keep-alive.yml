@@ -1,0 +1,29 @@
+name: Keep Streamlit Alive
+
+on:
+  schedule:
+    - cron: '0 */6 * * *'
+  workflow_dispatch:
+
+jobs:
+  ping:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Ping Streamlit App
+        run: |
+          curl -s -o /dev/null -w "%{http_code}" https://valorean-cash-forecast-poc.streamlit.app
+          echo "Pinged at $(date)"
+```
+
+5. Scroll down, add commit message: `Add keep-alive workflow for Streamlit`
+
+6. Click **"Commit changes"**
+
+---
+
+## Then Sync Local Repo
+
+**Prompt for Claude Code:**
+```
+cd /Users/arjunkrishnan/Desktop/Downloads/files-4/cash_forecast
+git pull origin main
