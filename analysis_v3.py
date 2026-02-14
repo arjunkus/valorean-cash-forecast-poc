@@ -85,16 +85,18 @@ class OutlierDetector:
             
             if abs(z) >= self.MEDIUM_THRESHOLD:
                 severity = 'High' if abs(z) >= self.HIGH_THRESHOLD else 'Medium'
-                
+                actual_val = row['net_cash_flow']
+                pct_diff = ((actual_val - mean_val) / abs(mean_val) * 100) if mean_val != 0 else 0
+
                 if z > 0:
                     anomaly_type = 'Unexpected Cash Surplus'
-                    description = f"Net inflow ${row['net_cash_flow']:,.0f} is {abs(z):.1f}x above normal (${mean_val:,.0f})"
+                    description = f"Actual: ${actual_val:,.0f} vs Average: ${mean_val:,.0f} ({abs(pct_diff):.0f}% higher)"
                     action = "Verify receipt source. Consider short-term investment if excess persists."
                 else:
                     anomaly_type = 'Unexpected Cash Deficit'
-                    description = f"Net outflow ${abs(row['net_cash_flow']):,.0f} is {abs(z):.1f}x above normal"
+                    description = f"Actual: ${actual_val:,.0f} vs Average: ${mean_val:,.0f} ({abs(pct_diff):.0f}% lower)"
                     action = "Verify payment validity. Check liquidity buffer."
-                
+
                 outliers.append({
                     'date': row['date'],
                     'day_name': row['day_name'],
@@ -103,7 +105,7 @@ class OutlierDetector:
                     'description': description,
                     'recommended_action': action,
                     'z_score': round(z, 2),
-                    'value': row['net_cash_flow'],
+                    'value': actual_val,
                     'expected': mean_val,
                 })
         
@@ -146,10 +148,11 @@ class OutlierDetector:
                     day_name = date.day_name()
                     severity = 'High' if abs(z) >= self.HIGH_THRESHOLD else 'Medium'
                     cat_name = self.CATEGORY_NAMES.get(cat, cat)
-                    
+                    pct_diff = ((value - mean_val) / mean_val * 100) if mean_val != 0 else 0
+
                     if z > 0:
                         anomaly_type = f'{cat_name} Spike'
-                        description = f"{cat_name} ${value:,.0f} is {abs(z):.1f}x above normal (${mean_val:,.0f})"
+                        description = f"{cat_name} — Actual: ${value:,.0f} vs Average: ${mean_val:,.0f} ({abs(pct_diff):.0f}% higher)"
                         if cat == 'AR':
                             action = "Verify large receipt. Update forecast if recurring."
                         elif cat == 'AP':
@@ -160,14 +163,14 @@ class OutlierDetector:
                             action = "Investigate unusual amount."
                     else:
                         anomaly_type = f'{cat_name} Shortfall'
-                        description = f"{cat_name} ${value:,.0f} is {abs(z):.1f}x below normal (${mean_val:,.0f})"
+                        description = f"{cat_name} — Actual: ${value:,.0f} vs Average: ${mean_val:,.0f} ({abs(pct_diff):.0f}% lower)"
                         if cat == 'AR':
                             action = "Follow up on delayed collections."
                         elif cat == 'AP':
                             action = "Verify all invoices processed."
                         else:
                             action = "Investigate shortfall."
-                    
+
                     outliers.append({
                         'date': date,
                         'day_name': day_name,

@@ -914,28 +914,62 @@ def render_outliers():
     outlier_detector = st.session_state.outlier_detector
     summary = outlier_detector.get_outlier_summary()
     outliers_df = outlier_detector.get_outliers()
+
+    # Summary metrics
     col1, col2, col3, col4 = st.columns(4)
-    with col1: st.metric("Days Analyzed", summary.get('total_days', 0))
-    with col2: st.metric("Outliers Found", summary.get('outlier_count', 0))
-    with col3: st.metric("High Severity", summary.get('by_severity', {}).get('High', 0))
-    with col4: st.metric("Medium Severity", summary.get('by_severity', {}).get('Medium', 0))
+    with col1:
+        st.metric("Days Analyzed", summary.get('total_days', 0))
+    with col2:
+        st.metric("Outliers Found", summary.get('outlier_count', 0))
+    with col3:
+        st.metric("High Priority", summary.get('by_severity', {}).get('High', 0))
+    with col4:
+        st.metric("Medium Priority", summary.get('by_severity', {}).get('Medium', 0))
+
     st.markdown("---")
+
     if outliers_df is not None and len(outliers_df) > 0:
-        st.subheader("Actionable Items")
+        st.subheader("Items Requiring Attention")
+
         for sev in ['High', 'Medium']:
             sev_df = outliers_df[outliers_df['severity'] == sev]
-            if len(sev_df) > 0:
-                st.markdown(f"#### {sev} Priority")
-                for _, row in sev_df.iterrows():
-                    with st.expander(f"{row['date'].strftime('%Y-%m-%d')} - {row['anomaly_type']}", expanded=(sev=='High')):
-                        st.markdown(f"**{row['description']}**")
-                        st.info(f"**Action:** {row['recommended_action']}")
-                        c1, c2, c3 = st.columns(3)
-                        with c1: st.metric("Actual", f"${row['value']:,.0f}")
-                        with c2: st.metric("Expected", f"${row['expected']:,.0f}")
-                        with c3: st.metric("Z-Score", f"{row['z_score']:.1f}")
+            if len(sev_df) == 0:
+                continue
+
+            icon = "🔴" if sev == 'High' else "🟡"
+            st.markdown(f"#### {icon} {sev} Priority ({len(sev_df)} items)")
+
+            for _, row in sev_df.iterrows():
+                # Calculate variance for display
+                variance = row['value'] - row['expected']
+                variance_pct = (variance / abs(row['expected']) * 100) if row['expected'] != 0 else 0
+
+                with st.expander(
+                    f"{row['date'].strftime('%b %d, %Y')} ({row['day_name']}) — {row['anomaly_type']}",
+                    expanded=(sev == 'High')
+                ):
+                    # Description
+                    st.markdown(f"**{row['description']}**")
+
+                    # Metrics row
+                    c1, c2, c3 = st.columns(3)
+                    with c1:
+                        st.metric("Actual Amount", f"${row['value']:,.0f}")
+                    with c2:
+                        st.metric("Expected Amount", f"${row['expected']:,.0f}")
+                    with c3:
+                        delta_color = "inverse" if variance < 0 else "normal"
+                        st.metric(
+                            "Variance",
+                            f"${abs(variance):,.0f}",
+                            delta=f"{variance_pct:+.0f}%",
+                            delta_color=delta_color
+                        )
+
+                    # Action
+                    st.info(f"**Recommended Action:** {row['recommended_action']}")
     else:
-        st.success("No actionable outliers detected.")
+        st.success("No outliers detected. All cash flows are within normal ranges.")
 
 def main():
     init_session_state()
