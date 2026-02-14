@@ -282,10 +282,10 @@ def render_overview():
         st.metric("T0 Date", forecaster.last_actual_date.strftime('%Y-%m-%d'))
     with col3:
         if 'T+7' in results:
-            st.metric("T+7 MAPE", f"{results['T+7']['balance_mape']:.1f}%", results['T+7']['rating'])
+            st.metric("T+7 Accuracy", f"{results['T+7']['balance_mape']:.1f}% error", results['T+7']['rating'])
     with col4:
         if 'T+30' in results:
-            st.metric("T+30 MAPE", f"{results['T+30']['balance_mape']:.1f}%", results['T+30']['rating'])
+            st.metric("T+30 Accuracy", f"{results['T+30']['balance_mape']:.1f}% error", results['T+30']['rating'])
     
     st.markdown("---")
     
@@ -300,7 +300,7 @@ def render_overview():
                 'Total Inflows': f"${f['forecast_inflow'].sum():,.0f}",
                 'Total Outflows': f"${f['forecast_outflow'].sum():,.0f}",
                 'Closing': f"${f['closing_balance'].iloc[-1]:,.0f}",
-                'MAPE': f"{results[hz]['balance_mape']:.1f}%" if hz in results else 'N/A',
+                'Accuracy': f"{results[hz]['balance_mape']:.1f}% error" if hz in results else 'N/A',
                 'Rating': results[hz]['rating'] if hz in results else 'N/A'
             })
     
@@ -336,7 +336,7 @@ def render_forecasts():
         st.metric("= Closing", f"${fcast['closing_balance'].iloc[-1]:,.0f}")
     with col5:
         mape = results[horizon]['balance_mape'] if horizon in results else 0
-        st.metric("MAPE", f"{mape:.1f}%", results[horizon]['rating'] if horizon in results else '')
+        st.metric("Accuracy", f"{mape:.1f}% error", results[horizon]['rating'] if horizon in results else '')
     
     st.markdown("---")
     
@@ -381,11 +381,11 @@ def render_accuracy():
     
     col1, col2, col3, col4 = st.columns(4)
     with col1:
-        st.metric("Balance MAPE", f"{results[horizon]['balance_mape']:.2f}%")
+        st.metric("Balance Accuracy", f"{results[horizon]['balance_mape']:.2f}% error")
     with col2:
-        st.metric("Inflow MAPE", f"{results[horizon]['inflow_mape']:.2f}%")
+        st.metric("Inflow Accuracy", f"{results[horizon]['inflow_mape']:.2f}% error")
     with col3:
-        st.metric("Outflow MAPE", f"{results[horizon]['outflow_mape']:.2f}%")
+        st.metric("Outflow Accuracy", f"{results[horizon]['outflow_mape']:.2f}% error")
     with col4:
         st.metric("Rating", results[horizon]['rating'])
     
@@ -396,13 +396,13 @@ def render_accuracy():
         fig = go.Figure(go.Bar(x=mape_df['horizon_day'], y=mape_df['balance_mape'], marker_color=colors))
         fig.add_hline(y=2, line_dash="dot", line_color="green")
         fig.add_hline(y=5, line_dash="dot", line_color="orange")
-        fig.update_layout(title="Balance MAPE by Horizon Day", xaxis_title="Day", yaxis_title="MAPE %", height=400)
+        fig.update_layout(title="Balance Accuracy by Horizon Day", xaxis_title="Day", yaxis_title="Error %", height=400)
         st.plotly_chart(fig, use_container_width=True)
 
 
 def render_shap():
     if not st.session_state.data_loaded:
-        st.info("👈 Click 'Load Data & Train' to view SHAP")
+        st.info("👈 Click 'Load Data & Train' to view Key Drivers")
         return
     
     shap_results = st.session_state.shap_results
@@ -479,7 +479,7 @@ def main():
     st.title("💰 Cash Forecasting Intelligence")
     st.caption("Prophet Forecasting • Category Breakdown • Banking Days Only")
     
-    tabs = st.tabs(["📊 Overview", "📈 Forecasts", "🎯 Accuracy", "🔍 SHAP", "⚠️ Outliers"])
+    tabs = st.tabs(["📊 Overview", "📈 Forecasts", "🎯 Accuracy", "🔍 Key Drivers", "⚠️ Outliers"])
     
     with tabs[0]:
         render_overview()

@@ -278,16 +278,16 @@ def create_mape_by_horizon_chart(mape_df: pd.DataFrame) -> go.Figure:
     fig = go.Figure(go.Bar(
         x=mape_df['horizon_day'], y=mape_df['balance_mape'],
         marker_color=colors,
-        hovertemplate='Day %{x}<br>MAPE: %{y:.2f}%<extra></extra>'
+        hovertemplate='Day %{x}<br>Error: %{y:.2f}%<extra></extra>'
     ))
-    
+
     fig.add_hline(y=2, line_dash="dot", line_color="green", annotation_text="2%")
     fig.add_hline(y=5, line_dash="dot", line_color="orange", annotation_text="5%")
-    
+
     fig.update_layout(
-        title="Balance MAPE by Horizon Day",
+        title="Balance Accuracy by Horizon Day",
         xaxis_title="Forecast Day",
-        yaxis_title="MAPE %",
+        yaxis_title="Error %",
         height=350
     )
     return fig
@@ -312,9 +312,9 @@ def create_mape_by_dow_chart(mape_df: pd.DataFrame) -> go.Figure:
     ))
     
     fig.update_layout(
-        title="MAPE by Day of Week",
+        title="Accuracy by Day of Week",
         xaxis_title="Day",
-        yaxis_title="MAPE %",
+        yaxis_title="Error %",
         barmode='group',
         height=350,
         legend=dict(orientation="h", yanchor="bottom", y=1.02)
@@ -342,11 +342,11 @@ def create_error_heatmap(daily_errors: pd.DataFrame, horizon: str) -> go.Figure:
         x=[f'Day {c}' for c in pivot.columns],
         y=pivot.index,
         colorscale='RdYlGn_r',
-        hovertemplate='%{y}, %{x}<br>MAPE: %{z:.2f}%<extra></extra>'
+        hovertemplate='%{y}, %{x}<br>Error: %{z:.2f}%<extra></extra>'
     ))
-    
+
     fig.update_layout(
-        title=f"Balance MAPE Heatmap ({horizon})",
+        title=f"Balance Accuracy Heatmap ({horizon})",
         xaxis_title="Horizon Day",
         yaxis_title="Day of Week",
         height=300
@@ -376,9 +376,9 @@ def create_horizon_comparison_chart(results: dict) -> go.Figure:
     ))
     
     fig.update_layout(
-        title="MAPE Across Horizons",
+        title="Accuracy Across Horizons",
         xaxis_title="Horizon",
-        yaxis_title="MAPE %",
+        yaxis_title="Error %",
         barmode='group',
         height=350
     )
@@ -447,10 +447,10 @@ def render_overview():
         st.metric("T0 Date", forecaster.last_actual_date.strftime('%Y-%m-%d'))
     with col3:
         if 'T+7' in results:
-            st.metric("T+7 MAPE", f"{results['T+7']['balance_mape']:.2f}%", results['T+7']['rating'])
+            st.metric("T+7 Accuracy", f"{results['T+7']['balance_mape']:.2f}% error", results['T+7']['rating'])
     with col4:
         if 'T+30' in results:
-            st.metric("T+30 MAPE", f"{results['T+30']['balance_mape']:.2f}%", results['T+30']['rating'])
+            st.metric("T+30 Accuracy", f"{results['T+30']['balance_mape']:.2f}% error", results['T+30']['rating'])
     
     st.markdown("---")
     
@@ -464,7 +464,7 @@ def render_overview():
                 'Inflows': f"${f['forecast_inflow'].sum():,.0f}",
                 'Outflows': f"${f['forecast_outflow_ex_capex'].sum():,.0f}",
                 'Closing': f"${f['closing_balance'].iloc[-1]:,.0f}",
-                'Balance MAPE': f"{results[hz]['balance_mape']:.2f}%",
+                'Balance Accuracy': f"{results[hz]['balance_mape']:.2f}% error",
                 'Rating': results[hz]['rating']
             })
     
@@ -570,18 +570,18 @@ def render_accuracy():
     st.subheader("📊 Overall Accuracy")
     col1, col2, col3, col4 = st.columns(4)
     with col1:
-        st.metric("Balance MAPE", f"{results[horizon]['balance_mape']:.2f}%", results[horizon]['rating'])
+        st.metric("Balance Accuracy", f"{results[horizon]['balance_mape']:.2f}% error", results[horizon]['rating'])
     with col2:
-        st.metric("Inflow MAPE", f"{results[horizon]['inflow_mape']:.2f}%")
+        st.metric("Inflow Accuracy", f"{results[horizon]['inflow_mape']:.2f}% error")
     with col3:
-        st.metric("Outflow MAPE", f"{results[horizon]['outflow_mape']:.2f}%")
+        st.metric("Outflow Accuracy", f"{results[horizon]['outflow_mape']:.2f}% error")
     with col4:
         st.metric("Samples", results[horizon]['samples'])
     
     st.markdown("---")
     
-    # MAPE by Horizon Day
-    st.subheader("📈 MAPE by Horizon Day")
+    # Accuracy by Horizon Day
+    st.subheader("📈 Accuracy by Horizon Day")
     st.caption("Which forecast days have higher error? Set cash buffers accordingly.")
     
     col1, col2 = st.columns(2)
@@ -604,8 +604,8 @@ def render_accuracy():
     
     st.markdown("---")
     
-    # MAPE by Day of Week
-    st.subheader("📅 MAPE by Day of Week")
+    # Accuracy by Day of Week
+    st.subheader("📅 Accuracy by Day of Week")
     st.caption("Are certain weekdays harder to forecast?")
     
     col1, col2 = st.columns(2)
@@ -803,7 +803,7 @@ def main():
     st.title("💰 Cash Forecasting Intelligence")
     st.caption("Prophet • CAPEX User Input • Daily Accuracy Analysis")
     
-    tabs = st.tabs(["📊 Overview", "📈 Forecasts", "🎯 Accuracy", "🔍 SHAP", "⚠️ Outliers"])
+    tabs = st.tabs(["📊 Overview", "📈 Forecasts", "🎯 Accuracy", "🔍 Key Drivers", "⚠️ Outliers"])
     
     with tabs[0]:
         render_overview()

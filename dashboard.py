@@ -293,11 +293,11 @@ def create_mape_heatmap(mape_results: dict):
         text=[[f'{v:.1f}%' for v in row] for row in z_data],
         texttemplate='%{text}',
         textfont={"size": 12},
-        hovertemplate='%{y}<br>%{x}: %{z:.1f}% MAPE<extra></extra>'
+        hovertemplate='%{y}<br>%{x}: %{z:.1f}% Error<extra></extra>'
     ))
-    
+
     fig.update_layout(
-        title='MAPE by Day of Week and Forecast Horizon',
+        title='Forecast Error by Day of Week and Horizon',
         xaxis_title='Day of Week',
         yaxis_title='Forecast Horizon',
         height=350
@@ -386,8 +386,8 @@ def create_shap_chart(shap_result):
     ))
     
     fig.update_layout(
-        title='SHAP Feature Importance',
-        xaxis_title='Mean |SHAP Value|',
+        title='Key Drivers',
+        xaxis_title='Impact Score',
         yaxis_title='Feature',
         height=400
     )
@@ -544,18 +544,18 @@ def main():
         with col2:
             st.markdown("""
             **Forecasting Models**
-            - ARIMA (RT+7)
-            - Prophet (T+30)
-            - LSTM (T+90)
-            - Ensemble (NT+365)
+            - Short-term (RT+7)
+            - Medium-term (T+30)
+            - Long-term (T+90)
+            - Annual (NT+365)
             """)
         
         with col3:
             st.markdown("""
             **Analytics**
-            - Daily MAPE Analysis
+            - Daily Accuracy Analysis
             - Trend Decomposition
-            - SHAP Explainability
+            - Key Driver Analysis
             - Outlier Detection
             """)
         
@@ -613,10 +613,10 @@ def main():
     
     # Main Tabs
     tab1, tab2, tab3, tab4, tab5, tab6 = st.tabs([
-        "📊 Overview", 
-        "🔮 Forecasts", 
-        "📈 MAPE Analysis",
-        "🔍 Trend & SHAP",
+        "📊 Overview",
+        "🔮 Forecasts",
+        "📈 Accuracy Analysis",
+        "🔍 Trends & Drivers",
         "⚠️ Outliers",
         "💡 Recommendations"
     ])
@@ -736,7 +736,7 @@ def main():
             st.dataframe(display_df, use_container_width=True)
     
     with tab3:
-        st.subheader("MAPE Analysis by Day")
+        st.subheader("Forecast Accuracy by Day")
         
         if not st.session_state.models_trained:
             st.warning("Please train models first.")
@@ -744,7 +744,7 @@ def main():
             mape_results = st.session_state.mape_results
             
             # Summary metrics
-            st.markdown("### Overall MAPE by Horizon")
+            st.markdown("### Overall Accuracy by Horizon")
             
             cols = st.columns(4)
             for i, (horizon, metrics) in enumerate(mape_results.items()):
@@ -765,14 +765,14 @@ def main():
             
             st.markdown("---")
             
-            # MAPE Heatmap
-            st.markdown("### MAPE Heatmap (by Day of Week)")
+            # Accuracy Heatmap
+            st.markdown("### Accuracy Heatmap (by Day of Week)")
             fig_heatmap = create_mape_heatmap(mape_results)
             if fig_heatmap:
                 st.plotly_chart(fig_heatmap, use_container_width=True)
             
             # Daily breakdown table
-            st.markdown("### Detailed Daily MAPE")
+            st.markdown("### Detailed Daily Accuracy")
             
             if 'daily_analysis' in mape_results:
                 daily_data = mape_results['daily_analysis']
@@ -789,13 +789,13 @@ def main():
                 
                 st.info("""
                 💡 **Insights:**
-                - Lower MAPE = Better accuracy
+                - Lower error percentage = Better accuracy
                 - Weekend predictions often have higher errors due to reduced business activity
                 - Monday/Friday may show higher errors due to week-start/end payment patterns
                 """)
     
     with tab4:
-        st.subheader("Trend Decomposition & SHAP Analysis")
+        st.subheader("Trend Decomposition & Key Driver Analysis")
         
         if not st.session_state.analysis_results:
             st.warning("Please train models first.")
@@ -825,7 +825,7 @@ def main():
                         st.markdown(f"- {insight}")
             
             with col2:
-                st.markdown("### 🎯 SHAP Feature Importance")
+                st.markdown("### 🎯 Key Drivers")
                 
                 shap_result = analysis.get('shap')
                 if shap_result and shap_result.top_features:
@@ -839,9 +839,9 @@ def main():
                 fig_trend = create_trend_chart(daily_cash, trend_result)
                 st.plotly_chart(fig_trend, use_container_width=True)
             
-            # SHAP insights
+            # Driver insights
             if shap_result:
-                st.markdown("### SHAP Insights")
+                st.markdown("### Driver Insights")
                 for insight in shap_result.insights:
                     st.markdown(f"- {insight}")
     
@@ -951,8 +951,8 @@ def main():
     st.divider()
     st.markdown("""
     <div style="text-align: center; color: #888; font-size: 0.9rem;">
-        Cash Forecasting Intelligence Dashboard | Powered by ARIMA, Prophet, LSTM & Ensemble Models<br>
-        SAP FQM Integration Ready | Built for Enterprise Treasury Management
+        Cash Forecasting Intelligence Dashboard | AI-Powered Multi-Horizon Forecasting<br>
+        SAP Integration Ready | Built for Enterprise Treasury Management
     </div>
     """, unsafe_allow_html=True)
 

@@ -347,7 +347,7 @@ def create_mape_gauge(mape: float, horizon: str):
         mode="gauge+number+delta",
         value=mape,
         number={'suffix': '%', 'font': {'size': 40}},
-        title={'text': f'{horizon} MAPE', 'font': {'size': 16}},
+        title={'text': f'{horizon} Accuracy', 'font': {'size': 16}},
         delta={'reference': thresholds['good'], 'relative': False},
         gauge={
             'axis': {'range': [0, thresholds['poor'] * 1.5], 'tickwidth': 1},
@@ -392,12 +392,12 @@ def create_mape_heatmap(mape_results: dict):
         text=[[f'{v:.1f}%' for v in row] for row in z_data],
         texttemplate='%{text}',
         textfont={"size": 14, "color": "black"},
-        hovertemplate='<b>%{y}</b><br>%{x}: %{z:.1f}% MAPE<extra></extra>',
-        colorbar=dict(title='MAPE %')
+        hovertemplate='<b>%{y}</b><br>%{x}: %{z:.1f}% Error<extra></extra>',
+        colorbar=dict(title='Error %')
     ))
-    
+
     fig.update_layout(
-        title='Daily MAPE Analysis (Not Weekly Averages)',
+        title='Daily Accuracy Analysis',
         xaxis_title='Day of Week',
         yaxis_title='Forecast Horizon',
         height=350
@@ -508,7 +508,7 @@ def create_shap_waterfall(shap_result, sample_idx: int = 0):
               if f in features][:8]
     
     fig = go.Figure(go.Waterfall(
-        name="SHAP",
+        name="Driver",
         orientation="h",
         y=features[::-1],
         x=values[::-1],
@@ -518,7 +518,7 @@ def create_shap_waterfall(shap_result, sample_idx: int = 0):
     ))
     
     fig.update_layout(
-        title="SHAP Feature Contributions",
+        title="Key Driver Contributions",
         xaxis_title="Impact on Prediction",
         height=400
     )
@@ -615,7 +615,7 @@ def main():
     # Header
     st.markdown('<p class="main-header">💰 Cash Forecasting Intelligence Dashboard</p>', 
                 unsafe_allow_html=True)
-    st.markdown('<p class="sub-header">AI-Powered Multi-Horizon Forecasting • ARIMA • Prophet • LSTM • Ensemble | SAP FQM Integration Ready</p>', 
+    st.markdown('<p class="sub-header">AI-Powered Multi-Horizon Cash Flow Forecasting | SAP Integration Ready</p>',
                 unsafe_allow_html=True)
     
     # ==========================================================================
@@ -664,7 +664,7 @@ def main():
                 progress_bar.progress(30, text="🤖 Training ARIMA model...")
                 daily_cash = st.session_state.data['daily_cash_position']
                 
-                progress_bar.progress(50, text="🤖 Training Prophet & LSTM models...")
+                progress_bar.progress(50, text="🤖 Training forecasting models...")
                 mape_results, forecaster, forecasts = train_all_models(daily_cash, test_size=test_size)
                 
                 st.session_state.forecaster = forecaster
@@ -752,18 +752,18 @@ def main():
         with col2:
             st.markdown("""
             **🤖 Forecasting**
-            - ARIMA (RT+7)
-            - Prophet (T+30)
-            - LSTM (T+90)
-            - Ensemble (NT+365)
+            - Short-term (RT+7)
+            - Medium-term (T+30)
+            - Long-term (T+90)
+            - Annual (NT+365)
             """)
         
         with col3:
             st.markdown("""
             **📈 Analytics**
-            - **Daily** MAPE Analysis
+            - **Daily** Accuracy Analysis
             - Trend Decomposition
-            - SHAP Explainability
+            - Key Driver Analysis
             - Outlier Detection
             """)
         
@@ -787,7 +787,7 @@ def main():
                 "Days": config['days'],
                 "Model": config['model'],
                 "Description": config['description'],
-                "Target MAPE": f"< {thresholds['good']}%",
+                "Target Accuracy": f"< {thresholds['good']}% error",
             })
         
         st.dataframe(pd.DataFrame(horizon_data), use_container_width=True, hide_index=True)
@@ -846,9 +846,9 @@ def main():
     # ==========================================================================
     tab1, tab2, tab3, tab4, tab5, tab6, tab7 = st.tabs([
         "📊 Overview",
-        "🔮 Forecasts", 
-        "📈 MAPE Analysis",
-        "🔍 Trends & SHAP",
+        "🔮 Forecasts",
+        "📈 Accuracy Analysis",
+        "🔍 Trends & Drivers",
         "⚠️ Outliers",
         "💡 Recommendations",
         "📥 Export"
@@ -992,13 +992,13 @@ def main():
         if not st.session_state.models_trained:
             st.warning("⚠️ Please train models first.")
         else:
-            st.subheader("📊 Daily MAPE Analysis (Not Weekly Averages)")
+            st.subheader("📊 Daily Accuracy Analysis")
             st.info("💡 This analysis shows forecast accuracy at the **daily level** for each day of the week, providing granular insights into when forecasts perform best and worst.")
             
             mape_results = st.session_state.mape_results
             
-            # Gauge charts for overall MAPE
-            st.markdown("### Overall MAPE by Horizon")
+            # Gauge charts for overall accuracy
+            st.markdown("### Overall Accuracy by Horizon")
             cols = st.columns(4)
             
             for i, (horizon, metrics) in enumerate(mape_results.items()):
@@ -1016,13 +1016,13 @@ def main():
             st.divider()
             
             # Heatmap
-            st.markdown("### Daily MAPE Heatmap")
+            st.markdown("### Daily Accuracy Heatmap")
             fig_heatmap = create_mape_heatmap(mape_results)
             if fig_heatmap:
                 st.plotly_chart(fig_heatmap, use_container_width=True)
             
             # Detailed table
-            st.markdown("### Detailed Daily MAPE Table")
+            st.markdown("### Detailed Daily Accuracy Table")
             
             if 'daily_analysis' in mape_results:
                 daily_data = mape_results['daily_analysis']
@@ -1049,8 +1049,8 @@ def main():
             
             with col1:
                 st.markdown("""
-                **Understanding MAPE Patterns:**
-                - **Weekend dips**: Reduced business activity leads to more predictable (or less variable) cash flows
+                **Understanding Accuracy Patterns:**
+                - **Weekend dips**: Reduced business activity leads to more predictable cash flows
                 - **Monday spikes**: Week-start payment processing creates volatility
                 - **Month-end effects**: Settlement cycles cause predictable but large swings
                 """)
@@ -1100,7 +1100,7 @@ def main():
                         st.markdown(f"• {insight}")
             
             with col2:
-                st.markdown("### 🎯 SHAP Feature Importance")
+                st.markdown("### 🎯 Key Drivers")
                 
                 shap_result = analysis.get('shap')
                 if shap_result and shap_result.top_features:
@@ -1118,7 +1118,7 @@ def main():
                     ))
                     fig.update_layout(
                         title='Feature Importance', height=400,
-                        xaxis_title='Mean |SHAP Value|'
+                        xaxis_title='Impact Score'
                     )
                     st.plotly_chart(fig, use_container_width=True)
             
@@ -1130,9 +1130,9 @@ def main():
                 fig_trend = create_trend_decomposition_chart(daily_cash, trend_result)
                 st.plotly_chart(fig_trend, use_container_width=True)
             
-            # SHAP insights
+            # Driver insights
             if shap_result:
-                st.markdown("### SHAP Insights")
+                st.markdown("### Driver Insights")
                 for insight in shap_result.insights:
                     st.markdown(f"• {insight}")
     
@@ -1309,13 +1309,13 @@ def main():
             
             # MAPE Results
             if st.session_state.mape_results:
-                if st.button("📥 Download MAPE Analysis (CSV)", use_container_width=True):
+                if st.button("📥 Download Accuracy Analysis (CSV)", use_container_width=True):
                     mape_data = []
                     for horizon, metrics in st.session_state.mape_results.items():
                         if horizon != "daily_analysis" and isinstance(metrics, dict):
                             mape_data.append({
                                 "Horizon": horizon,
-                                "MAPE": metrics.get('mape', 0),
+                                "Accuracy (% Error)": metrics.get('mape', 0),
                                 "Rating": metrics.get('rating', 'N/A'),
                                 "MAE": metrics.get('mae', 0),
                                 "RMSE": metrics.get('rmse', 0)
@@ -1324,7 +1324,7 @@ def main():
                     st.download_button(
                         label="Click to Download",
                         data=csv,
-                        file_name=f"mape_analysis_{datetime.now().strftime('%Y%m%d')}.csv",
+                        file_name=f"accuracy_analysis_{datetime.now().strftime('%Y%m%d')}.csv",
                         mime="text/csv"
                     )
         
@@ -1340,8 +1340,8 @@ def main():
     st.markdown("""
     <div style="text-align: center; color: #888; font-size: 0.85rem; padding: 1rem;">
         <strong>Cash Forecasting Intelligence Dashboard</strong> v1.0.0<br>
-        Powered by ARIMA • Prophet • LSTM • Ensemble Models<br>
-        SAP FQM Integration Ready | Enterprise Treasury Management
+        AI-Powered Multi-Horizon Forecasting<br>
+        SAP Integration Ready | Enterprise Treasury Management
     </div>
     """, unsafe_allow_html=True)
 

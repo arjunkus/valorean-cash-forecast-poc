@@ -123,7 +123,7 @@ def create_mape_by_horizon_chart(mape_df):
     fig = go.Figure(go.Bar(x=mape_df['horizon_day'], y=mape_df['balance_mape'], marker_color=colors))
     fig.add_hline(y=2, line_dash="dot", line_color="green")
     fig.add_hline(y=5, line_dash="dot", line_color="orange")
-    fig.update_layout(title="Balance MAPE by Horizon Day", xaxis_title="Day", yaxis_title="MAPE %", height=350)
+    fig.update_layout(title="Balance Accuracy by Horizon Day", xaxis_title="Day", yaxis_title="Error %", height=350)
     return fig
 
 def create_mape_by_dow_chart(mape_df):
@@ -132,7 +132,7 @@ def create_mape_by_dow_chart(mape_df):
     fig.add_trace(go.Bar(x=mape_df['day_name'], y=mape_df['balance_mape'], name='Balance', marker_color='#3498db'))
     fig.add_trace(go.Bar(x=mape_df['day_name'], y=mape_df['inflow_mape'], name='Inflow', marker_color='#27ae60'))
     fig.add_trace(go.Bar(x=mape_df['day_name'], y=mape_df['outflow_mape'], name='Outflow', marker_color='#e74c3c'))
-    fig.update_layout(title="MAPE by Day of Week", barmode='group', height=350)
+    fig.update_layout(title="Accuracy by Day of Week", barmode='group', height=350)
     return fig
 
 def create_horizon_comparison_chart(results):
@@ -141,7 +141,7 @@ def create_horizon_comparison_chart(results):
     fig.add_trace(go.Bar(x=horizons, y=[results[h]['balance_mape'] for h in horizons], name='Balance', marker_color='#3498db'))
     fig.add_trace(go.Bar(x=horizons, y=[results[h]['inflow_mape'] for h in horizons], name='Inflow', marker_color='#27ae60'))
     fig.add_trace(go.Bar(x=horizons, y=[results[h]['outflow_mape'] for h in horizons], name='Outflow', marker_color='#e74c3c'))
-    fig.update_layout(title="MAPE Across Horizons", barmode='group', height=350)
+    fig.update_layout(title="Accuracy Across Horizons", barmode='group', height=350)
     return fig
 
 def render_sidebar():
@@ -490,7 +490,7 @@ def render_overview():
         # Alert: Model accuracy degradation
         for hz in ['T+7', 'T+30']:
             if hz in results and results[hz]['rating'] == 'Poor':
-                alerts.append(('warning', f"{hz} model accuracy rated POOR (MAPE {results[hz]['balance_mape']:.1f}%) — consider retraining"))
+                alerts.append(('warning', f"{hz} model accuracy rated POOR ({results[hz]['balance_mape']:.1f}% error) — consider retraining"))
 
         # Render alerts
         if not alerts:
@@ -875,9 +875,9 @@ def render_accuracy():
     horizon = st.selectbox("Horizon", ['T+7', 'T+30', 'T+90'], key='acc_hz')
     if horizon not in results: return
     col1, col2, col3, col4 = st.columns(4)
-    with col1: st.metric("Balance MAPE", f"{results[horizon]['balance_mape']:.2f}%", results[horizon]['rating'])
-    with col2: st.metric("Inflow MAPE", f"{results[horizon]['inflow_mape']:.2f}%")
-    with col3: st.metric("Outflow MAPE", f"{results[horizon]['outflow_mape']:.2f}%")
+    with col1: st.metric("Balance Accuracy", f"{results[horizon]['balance_mape']:.2f}% error", results[horizon]['rating'])
+    with col2: st.metric("Inflow Accuracy", f"{results[horizon]['inflow_mape']:.2f}% error")
+    with col3: st.metric("Outflow Accuracy", f"{results[horizon]['outflow_mape']:.2f}% error")
     with col4: st.metric("Samples", results[horizon]['samples'])
     st.markdown("---")
     col1, col2 = st.columns(2)
@@ -941,7 +941,7 @@ def main():
     init_session_state()
     render_sidebar()
     st.title("Cash Forecasting Intelligence")
-    tabs = st.tabs(["Overview", "Daily Position", "Forecasts", "Accuracy", "SHAP", "Outliers"])
+    tabs = st.tabs(["Overview", "Daily Position", "Forecasts", "Accuracy", "Key Drivers", "Outliers"])
     with tabs[0]: render_overview()
     with tabs[1]: render_daily_position()
     with tabs[2]: render_forecasts()

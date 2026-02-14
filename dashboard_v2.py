@@ -152,16 +152,16 @@ def render_overview_tab():
     with col3:
         if 'T+7' in results:
             st.metric(
-                "T+7 MAPE",
-                f"{results['T+7']['balance_mape']:.1f}%",
+                "T+7 Accuracy",
+                f"{results['T+7']['balance_mape']:.1f}% error",
                 results['T+7']['rating']
             )
-    
+
     with col4:
         if 'T+30' in results:
             st.metric(
-                "T+30 MAPE",
-                f"{results['T+30']['balance_mape']:.1f}%",
+                "T+30 Accuracy",
+                f"{results['T+30']['balance_mape']:.1f}% error",
                 results['T+30']['rating']
             )
     
@@ -185,7 +185,7 @@ def render_overview_tab():
                 'Total Outflows': f"${fcast['forecast_outflow'].sum():,.0f}",
                 'Net Change': f"${fcast['forecast_net'].sum():+,.0f}",
                 'Closing Balance': f"${fcast['closing_balance'].iloc[-1]:,.0f}",
-                'MAPE': f"{mape:.1f}%",
+                'Accuracy': f"{mape:.1f}% error",
                 'Rating': rating
             })
     
@@ -199,8 +199,8 @@ def render_overview_tab():
     st.subheader("🔗 Detailed Analysis")
     st.markdown("""
     - **📈 Forecasts Tab**: Day-by-day forecast with inflows, outflows, and balances
-    - **🎯 Accuracy Tab**: MAPE by horizon day - see how accuracy changes over time
-    - **🔍 SHAP Tab**: What's driving the forecasts (weekly patterns, monthly cycles, etc.)
+    - **🎯 Accuracy Tab**: Error analysis by horizon day - see how accuracy changes over time
+    - **🔍 Drivers Tab**: What's driving the forecasts (weekly patterns, monthly cycles, etc.)
     - **⚠️ Outliers Tab**: Unusual cash flow days flagged for review
     """)
 
@@ -245,7 +245,7 @@ def render_forecasts_tab():
     with col4:
         st.metric("= Closing", f"${final_balance:,.0f}")
     with col5:
-        st.metric("MAPE", f"{mape:.1f}%", rating)
+        st.metric("Accuracy", f"{mape:.1f}% error", rating)
     
     st.markdown("---")
     
@@ -316,18 +316,18 @@ def render_accuracy_tab():
     st.markdown("### Overall Accuracy")
     col1, col2, col3, col4 = st.columns(4)
     with col1:
-        st.metric("Balance MAPE", f"{results[horizon]['balance_mape']:.2f}%")
+        st.metric("Balance Accuracy", f"{results[horizon]['balance_mape']:.2f}% error")
     with col2:
-        st.metric("Inflow MAPE", f"{results[horizon]['inflow_mape']:.2f}%")
+        st.metric("Inflow Accuracy", f"{results[horizon]['inflow_mape']:.2f}% error")
     with col3:
-        st.metric("Outflow MAPE", f"{results[horizon]['outflow_mape']:.2f}%")
+        st.metric("Outflow Accuracy", f"{results[horizon]['outflow_mape']:.2f}% error")
     with col4:
         st.metric("Rating", results[horizon]['rating'])
     
     st.markdown("---")
     
-    # MAPE by horizon day chart
-    st.markdown("### MAPE by Horizon Day")
+    # Accuracy by horizon day chart
+    st.markdown("### Accuracy by Horizon Day")
     st.caption("Shows how forecast accuracy degrades as we look further into the future")
     
     if 'mape_by_horizon_day' in results[horizon]:
@@ -343,7 +343,7 @@ def render_accuracy_tab():
             x=mape_df['horizon_day'],
             y=mape_df['balance_mape'],
             marker_color=colors,
-            hovertemplate='Day %{x}<br>MAPE: %{y:.2f}%<extra></extra>'
+            hovertemplate='Day %{x}<br>Error: %{y:.2f}%<extra></extra>'
         ))
         
         fig.add_hline(y=2, line_dash="dot", line_color="green", line_width=1,
@@ -353,7 +353,7 @@ def render_accuracy_tab():
         
         fig.update_layout(
             xaxis_title="Horizon Day",
-            yaxis_title="Balance MAPE (%)",
+            yaxis_title="Balance Error (%)",
             height=400,
             showlegend=False
         )
@@ -361,12 +361,12 @@ def render_accuracy_tab():
         st.plotly_chart(fig, use_container_width=True)
         
         # Table
-        st.markdown("### MAPE by Day (Detail)")
+        st.markdown("### Accuracy by Day (Detail)")
         table_df = mape_df[['horizon_day', 'balance_mape', 'inflow_mape', 'outflow_mape']].copy()
-        table_df.columns = ['Horizon Day', 'Balance MAPE %', 'Inflow MAPE %', 'Outflow MAPE %']
-        table_df['Balance MAPE %'] = table_df['Balance MAPE %'].apply(lambda x: f"{x:.2f}%")
-        table_df['Inflow MAPE %'] = table_df['Inflow MAPE %'].apply(lambda x: f"{x:.2f}%")
-        table_df['Outflow MAPE %'] = table_df['Outflow MAPE %'].apply(lambda x: f"{x:.2f}%")
+        table_df.columns = ['Horizon Day', 'Balance Error %', 'Inflow Error %', 'Outflow Error %']
+        table_df['Balance Error %'] = table_df['Balance Error %'].apply(lambda x: f"{x:.2f}%")
+        table_df['Inflow Error %'] = table_df['Inflow Error %'].apply(lambda x: f"{x:.2f}%")
+        table_df['Outflow Error %'] = table_df['Outflow Error %'].apply(lambda x: f"{x:.2f}%")
         st.dataframe(table_df, use_container_width=True, hide_index=True)
 
 
@@ -375,16 +375,16 @@ def render_accuracy_tab():
 # =============================================================================
 def render_shap_tab():
     if not st.session_state.data_loaded:
-        st.info("👈 Click 'Load Data & Train Models' to view SHAP analysis.")
+        st.info("👈 Click 'Load Data & Train Models' to view driver analysis.")
         return
-    
+
     shap_results = st.session_state.shap_results
-    
+
     if not shap_results:
-        st.warning("SHAP analysis not available.")
+        st.warning("Driver analysis not available.")
         return
-    
-    st.markdown("### Feature Importance Analysis")
+
+    st.markdown("### Key Driver Analysis")
     st.caption("What's driving the cash flow forecasts?")
     
     col1, col2 = st.columns(2)
@@ -560,7 +560,7 @@ def main():
     st.title("💰 Cash Forecasting Intelligence")
     st.caption("Enterprise Treasury Forecasting with Prophet • Banking Days Only • US Holiday Calendar")
     
-    tabs = st.tabs(["📊 Overview", "📈 Forecasts", "🎯 Accuracy", "🔍 SHAP", "⚠️ Outliers"])
+    tabs = st.tabs(["📊 Overview", "📈 Forecasts", "🎯 Accuracy", "🔍 Key Drivers", "⚠️ Outliers"])
     
     with tabs[0]:
         render_overview_tab()
