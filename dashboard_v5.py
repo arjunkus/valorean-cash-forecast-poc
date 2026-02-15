@@ -9,6 +9,7 @@ import pandas as pd
 import numpy as np
 import plotly.graph_objects as go
 from plotly.subplots import make_subplots
+from datetime import datetime
 import warnings
 
 warnings.filterwarnings('ignore')
@@ -47,6 +48,13 @@ DOW_NAMES = ['Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday']
 # SESSION STATE
 # =============================================================================
 def init_session_state():
+    today = datetime.now().strftime('%Y-%m-%d')
+
+    # Clear stale data if date changed
+    if 'last_loaded_date' in st.session_state and st.session_state.last_loaded_date != today:
+        st.session_state.data_loaded = False
+        st.session_state.last_loaded_date = None
+
     defaults = {
         'data_loaded': False,
         'daily_cash': None,
@@ -57,10 +65,54 @@ def init_session_state():
         'shap_results': None,
         'outlier_results': None,
         'capex_schedule': {},
+        'last_loaded_date': None,
     }
     for key, val in defaults.items():
         if key not in st.session_state:
             st.session_state[key] = val
+
+
+def auto_load_data(periods: int = 730, test_size: int = 90):
+    """Auto-load data on first visit or when date changes."""
+    today = datetime.now().strftime('%Y-%m-%d')
+
+    # Skip if already loaded today
+    if st.session_state.data_loaded and st.session_state.last_loaded_date == today:
+        return
+
+    # Generate fresh data - no caching to ensure dates are always current
+    data = generate_category_data(periods=periods)
+    st.session_state.daily_cash = data['daily_cash_position']
+    st.session_state.category_df = data['category_details']
+
+    # Run backtest for accuracy metrics (uses older data for training)
+    results, backtest_forecaster, forecasts, daily_errors = run_detailed_backtest(
+        st.session_state.daily_cash,
+        st.session_state.category_df,
+        test_size=test_size
+    )
+    st.session_state.backtest_results = results
+    st.session_state.daily_errors = daily_errors
+
+    # Train LIVE forecaster on ALL data for correct T0 = yesterday
+    live_forecaster = ProphetCashForecaster()
+    live_forecaster.fit(st.session_state.daily_cash, st.session_state.category_df)
+    live_forecasts = live_forecaster.predict()
+
+    st.session_state.forecaster = live_forecaster  # Use live forecaster for T0
+    st.session_state.forecasts = live_forecasts    # Use live forecasts
+
+    shap_analyzer = SHAPAnalyzer(live_forecaster)
+    st.session_state.shap_results = shap_analyzer.analyze()
+
+    outlier_detector = OutlierDetector()
+    outlier_detector.detect(st.session_state.daily_cash.copy(), st.session_state.category_df)
+    st.session_state.outlier_detector = outlier_detector
+    st.session_state.outlier_results = outlier_detector.results
+    st.session_state.outlier_summary = outlier_detector.get_outlier_summary()
+
+    st.session_state.data_loaded = True
+    st.session_state.last_loaded_date = today
 
 # =============================================================================
 # ENHANCED BACKTEST
@@ -390,50 +442,39 @@ def create_horizon_comparison_chart(results: dict) -> go.Figure:
 def render_sidebar():
     st.sidebar.title("💰 Cash Forecasting")
     st.sidebar.markdown("---")
-    
+
+    # Show today's date prominently
+    today = datetime.now()
+    st.sidebar.markdown(f"**Today:** {today.strftime('%B %d, %Y')}")
+
     periods = st.sidebar.slider("Historical Data (days)", 365, 1095, 730, 30)
     test_size = st.sidebar.slider("Test Period (days)", 30, 180, 90, 10)
-    
-    if st.sidebar.button("🚀 Load Data & Train", type="primary", use_container_width=True):
-        with st.spinner("Training..."):
-            data = generate_category_data(periods=periods)
-            st.session_state.daily_cash = data['daily_cash_position']
-            st.session_state.category_df = data['category_details']
-            
-            results, forecaster, forecasts, daily_errors = run_detailed_backtest(
-                st.session_state.daily_cash,
-                st.session_state.category_df,
-                test_size=test_size
-            )
-            
-            st.session_state.forecaster = forecaster
-            st.session_state.forecasts = forecasts
-            st.session_state.backtest_results = results
-            st.session_state.daily_errors = daily_errors
-            
-            shap_analyzer = SHAPAnalyzer(forecaster)
-            st.session_state.shap_results = shap_analyzer.analyze()
-            
-            outlier_detector = OutlierDetector()
-            outlier_detector.detect(st.session_state.daily_cash.copy(), st.session_state.category_df)
-            st.session_state.outlier_detector = outlier_detector
-            st.session_state.outlier_results = outlier_detector.results
-            st.session_state.outlier_summary = outlier_detector.get_outlier_summary()
-            
-            st.session_state.data_loaded = True
-        st.sidebar.success("✅ Ready!")
-    
+
+    # Auto-load on first visit
+    if not st.session_state.data_loaded:
+        with st.spinner("Loading data..."):
+            auto_load_data(periods=periods, test_size=test_size)
+
+    # Refresh button (for manual reload)
+    if st.sidebar.button("🔄 Refresh Data", use_container_width=True):
+        # Force reload with fresh data
+        st.session_state.data_loaded = False
+        st.session_state.last_loaded_date = None
+        with st.spinner("Refreshing..."):
+            auto_load_data(periods=periods, test_size=test_size)
+        st.sidebar.success("Data refreshed!")
+
     if st.session_state.data_loaded:
         st.sidebar.markdown("---")
-        st.sidebar.metric("T0", st.session_state.forecaster.last_actual_date.strftime('%Y-%m-%d'))
-        st.sidebar.metric("Balance", f"${st.session_state.forecaster.last_actual_closing_balance:,.0f}")
+        st.sidebar.metric("T0 (Forecast Start)", st.session_state.forecaster.last_actual_date.strftime('%b %d, %Y'))
+        st.sidebar.metric("Current Balance", f"${st.session_state.forecaster.last_actual_closing_balance:,.0f}")
 
 # =============================================================================
 # TABS
 # =============================================================================
 def render_overview():
     if not st.session_state.data_loaded:
-        st.info("👈 Click 'Load Data & Train' to start")
+        st.info("Loading data...")
         return
     
     forecaster = st.session_state.forecaster
@@ -473,7 +514,7 @@ def render_overview():
 
 def render_forecasts():
     if not st.session_state.data_loaded:
-        st.info("👈 Click 'Load Data & Train'")
+        st.info("Loading data...")
         return
     
     forecaster = st.session_state.forecaster
@@ -555,7 +596,7 @@ def render_forecasts():
 
 def render_accuracy():
     if not st.session_state.data_loaded:
-        st.info("👈 Click 'Load Data & Train'")
+        st.info("Loading data...")
         return
     
     results = st.session_state.backtest_results
@@ -641,7 +682,7 @@ def render_accuracy():
 
 def render_shap():
     if not st.session_state.data_loaded:
-        st.info("👈 Click 'Load Data & Train'")
+        st.info("Loading data...")
         return
     
     shap_results = st.session_state.shap_results
@@ -669,7 +710,7 @@ def render_shap():
 
 def render_outliers():
     if not st.session_state.data_loaded:
-        st.info("👈 Click 'Load Data & Train'")
+        st.info("Loading data...")
         return
 
     outlier_detector = st.session_state.outlier_detector
