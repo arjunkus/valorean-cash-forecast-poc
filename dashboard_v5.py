@@ -44,6 +44,10 @@ OUTFLOW_COLORS = {
 }
 DOW_NAMES = ['Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday']
 
+# Client-configurable settings - not exposed in UI
+HISTORICAL_DAYS = 730      # Days of historical data to generate (2 years)
+TEST_PERIOD_DAYS = 90      # Days held out for backtest accuracy metrics
+
 # =============================================================================
 # SESSION STATE
 # =============================================================================
@@ -72,7 +76,7 @@ def init_session_state():
             st.session_state[key] = val
 
 
-def auto_load_data(periods: int = 730, test_size: int = 90):
+def auto_load_data():
     """Auto-load data on first visit or when date changes."""
     today = datetime.now().strftime('%Y-%m-%d')
 
@@ -81,7 +85,7 @@ def auto_load_data(periods: int = 730, test_size: int = 90):
         return
 
     # Generate fresh data - no caching to ensure dates are always current
-    data = generate_category_data(periods=periods)
+    data = generate_category_data(periods=HISTORICAL_DAYS)
     st.session_state.daily_cash = data['daily_cash_position']
     st.session_state.category_df = data['category_details']
 
@@ -89,7 +93,7 @@ def auto_load_data(periods: int = 730, test_size: int = 90):
     results, backtest_forecaster, forecasts, daily_errors = run_detailed_backtest(
         st.session_state.daily_cash,
         st.session_state.category_df,
-        test_size=test_size
+        test_size=TEST_PERIOD_DAYS
     )
     st.session_state.backtest_results = results
     st.session_state.daily_errors = daily_errors
@@ -447,13 +451,10 @@ def render_sidebar():
     today = datetime.now()
     st.sidebar.markdown(f"**Today:** {today.strftime('%B %d, %Y')}")
 
-    periods = st.sidebar.slider("Historical Data (days)", 365, 1095, 730, 30)
-    test_size = st.sidebar.slider("Test Period (days)", 30, 180, 90, 10)
-
     # Auto-load on first visit
     if not st.session_state.data_loaded:
         with st.spinner("Loading data..."):
-            auto_load_data(periods=periods, test_size=test_size)
+            auto_load_data()
 
     # Refresh button (for manual reload)
     if st.sidebar.button("🔄 Refresh Data", use_container_width=True):
@@ -461,7 +462,7 @@ def render_sidebar():
         st.session_state.data_loaded = False
         st.session_state.last_loaded_date = None
         with st.spinner("Refreshing..."):
-            auto_load_data(periods=periods, test_size=test_size)
+            auto_load_data()
         st.sidebar.success("Data refreshed!")
 
     if st.session_state.data_loaded:
