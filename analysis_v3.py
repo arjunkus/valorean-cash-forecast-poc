@@ -1,299 +1,347 @@
 """
-Analysis Module v3 - Focused Outlier Detection
+Analysis Module v3 - Forward-Looking Forecast Alerts
 """
 
 import pandas as pd
 import numpy as np
 from typing import Dict, List, Any
+from datetime import datetime, timedelta
 
 
-class OutlierDetector:
-    """Focused outlier detection for actionable treasury insights."""
-    
-    HIGH_THRESHOLD = 3.0
-    MEDIUM_THRESHOLD = 2.5
-    
+class ForecastAlertDetector:
+    """
+    Forward-looking alert detection for actionable treasury insights.
+
+    Analyzes FORECASTED cash flows to alert users about:
+    - Unusual inflows/outflows in upcoming days
+    - Liquidity risk (projected balance below threshold)
+    - Large scheduled payments requiring attention
+    """
+
+    # Alert thresholds
+    DEVIATION_HIGH = 0.40    # 40% deviation = High priority
+    DEVIATION_MEDIUM = 0.25  # 25% deviation = Medium priority
+    LIQUIDITY_BUFFER = 5_000_000  # $5M minimum balance threshold
+
     CATEGORY_NAMES = {
         'AR': 'Accounts Receivable',
-        'AP': 'Accounts Payable', 
+        'AP': 'Accounts Payable',
         'PAYROLL': 'Payroll',
         'IC_IN': 'Intercompany In',
         'IC_OUT': 'Intercompany Out',
         'TAX': 'Tax Payment',
         'DEBT': 'Debt Service',
         'INV_INC': 'Investment Income',
+        'CAPEX': 'Capital Expenditure',
     }
-    
+
     def __init__(self):
-        self.category_stats = {}
-        self.net_flow_stats = {}
+        self.alerts_df = None
+        self.historical_stats = {}
         self.results = None
-        self.outliers_df = None
-    
-    def detect(self, daily_cash, category_df=None):
-        df = daily_cash.copy()
+
+    def detect(self, forecast_df, historical_df, category_df=None):
+        """
+        Detect alerts in FORECASTED data by comparing to historical patterns.
+
+        Args:
+            forecast_df: DataFrame with forecasted values (T+1 to T+30)
+            historical_df: DataFrame with historical actuals (for computing baselines)
+            category_df: Optional category breakdown for detailed alerts
+        """
+        alerts_list = []
+
+        # Compute historical baselines from actuals
+        self._compute_historical_stats(historical_df, category_df)
+
+        # Analyze each forecasted day
+        for _, row in forecast_df.iterrows():
+            day_alerts = self._analyze_forecast_day(row)
+            alerts_list.extend(day_alerts)
+
+        # Check for liquidity risk
+        liquidity_alerts = self._check_liquidity_risk(forecast_df)
+        alerts_list.extend(liquidity_alerts)
+
+        if alerts_list:
+            self.alerts_df = pd.DataFrame(alerts_list)
+            self.alerts_df = self.alerts_df.sort_values(['severity_order', 'date']).reset_index(drop=True)
+            self.alerts_df = self.alerts_df.drop(columns=['severity_order'])
+        else:
+            self.alerts_df = pd.DataFrame(columns=[
+                'date', 'day_name', 'severity', 'alert_type',
+                'description', 'recommended_action', 'forecast_value', 'expected_value'
+            ])
+
+        self.results = forecast_df
+        return self.alerts_df
+
+    def _compute_historical_stats(self, historical_df, category_df=None):
+        """Compute historical averages by day of week for comparison."""
+        df = historical_df.copy()
         if 'is_banking_day' in df.columns:
             df = df[df['is_banking_day']].copy()
-        df = df.sort_values('date').reset_index(drop=True)
+
         df['day_of_week'] = df['date'].dt.dayofweek
-        df['day_name'] = df['date'].dt.day_name()
-        df['is_outlier'] = False
-        
-        outliers_list = []
-        
-        # Method 1: Net Cash Flow outliers
-        net_outliers = self._detect_net_flow_outliers(df)
-        outliers_list.extend(net_outliers)
-        
-        # Method 2: Category-specific outliers
-        if category_df is not None:
-            cat_outliers = self._detect_category_outliers(df, category_df)
-            outliers_list.extend(cat_outliers)
-        
-        if outliers_list:
-            self.outliers_df = pd.DataFrame(outliers_list)
-            self.outliers_df = self.outliers_df.sort_values('date').reset_index(drop=True)
-            outlier_dates = self.outliers_df['date'].unique()
-            df.loc[df['date'].isin(outlier_dates), 'is_outlier'] = True
-        else:
-            self.outliers_df = pd.DataFrame(columns=[
-                'date', 'day_name', 'severity', 'anomaly_type', 
-                'description', 'recommended_action', 'z_score', 'value', 'expected'
-            ])
-        
-        self.results = df
-        return df
-    
-    def _detect_net_flow_outliers(self, df):
-        outliers = []
-        net_flow = df['net_cash_flow']
-        mean_val = net_flow.mean()
-        std_val = net_flow.std()
-        
-        self.net_flow_stats = {
-            'mean': mean_val,
-            'std': std_val,
-            'high_threshold': mean_val + self.HIGH_THRESHOLD * std_val,
-            'low_threshold': mean_val - self.HIGH_THRESHOLD * std_val,
+
+        # Overall stats
+        self.historical_stats['inflow'] = {
+            'mean': df['inflow'].mean(),
+            'std': df['inflow'].std(),
+            'by_dow': df.groupby('day_of_week')['inflow'].mean().to_dict()
         }
-        
-        if std_val == 0:
-            return outliers
-        
-        for idx, row in df.iterrows():
-            z = (row['net_cash_flow'] - mean_val) / std_val
-            
-            if abs(z) >= self.MEDIUM_THRESHOLD:
-                severity = 'High' if abs(z) >= self.HIGH_THRESHOLD else 'Medium'
-                actual_val = row['net_cash_flow']
-                pct_diff = ((actual_val - mean_val) / abs(mean_val) * 100) if mean_val != 0 else 0
+        self.historical_stats['outflow'] = {
+            'mean': df['outflow'].mean(),
+            'std': df['outflow'].std(),
+            'by_dow': df.groupby('day_of_week')['outflow'].mean().to_dict()
+        }
+        self.historical_stats['net_flow'] = {
+            'mean': df['net_cash_flow'].mean(),
+            'std': df['net_cash_flow'].std(),
+        }
 
-                if z > 0:
-                    anomaly_type = 'Unexpected Cash Surplus'
-                    description = f"Actual: ${actual_val:,.0f} vs Average: ${mean_val:,.0f} ({abs(pct_diff):.0f}% higher)"
-                    action = "Verify receipt source. Consider short-term investment if excess persists."
+        # Category stats if available
+        if category_df is not None:
+            cat_df = category_df.copy()
+            if 'is_banking_day' in cat_df.columns:
+                cat_df = cat_df[cat_df['is_banking_day']].copy()
+
+            for cat in ['AR', 'AP', 'PAYROLL', 'TAX', 'DEBT', 'CAPEX']:
+                if cat in cat_df.columns:
+                    non_zero = cat_df[cat_df[cat] > 0][cat]
+                    if len(non_zero) > 0:
+                        self.historical_stats[cat] = {
+                            'mean': non_zero.mean(),
+                            'std': non_zero.std(),
+                        }
+
+    def _analyze_forecast_day(self, row):
+        """Analyze a single forecasted day for anomalies."""
+        alerts = []
+        date = row['date']
+        day_name = date.day_name() if hasattr(date, 'day_name') else pd.Timestamp(date).day_name()
+        dow = date.dayofweek if hasattr(date, 'dayofweek') else pd.Timestamp(date).dayofweek
+
+        # Check inflow forecast
+        if 'forecast_inflow' in row:
+            forecast_val = row['forecast_inflow']
+            expected = self.historical_stats['inflow']['by_dow'].get(dow, self.historical_stats['inflow']['mean'])
+
+            if expected > 0:
+                pct_diff = (forecast_val - expected) / expected
+
+                if abs(pct_diff) >= self.DEVIATION_HIGH:
+                    severity = 'High'
+                    severity_order = 1
+                elif abs(pct_diff) >= self.DEVIATION_MEDIUM:
+                    severity = 'Medium'
+                    severity_order = 2
                 else:
-                    anomaly_type = 'Unexpected Cash Deficit'
-                    description = f"Actual: ${actual_val:,.0f} vs Average: ${mean_val:,.0f} ({abs(pct_diff):.0f}% lower)"
-                    action = "Verify payment validity. Check liquidity buffer."
+                    severity = None
 
-                outliers.append({
-                    'date': row['date'],
-                    'day_name': row['day_name'],
-                    'severity': severity,
-                    'anomaly_type': anomaly_type,
-                    'description': description,
-                    'recommended_action': action,
-                    'z_score': round(z, 2),
-                    'value': actual_val,
-                    'expected': mean_val,
-                })
-        
-        return outliers
-    
-    def _detect_category_outliers(self, df, category_df):
-        outliers = []
-        cat_df = category_df.copy()
-        
-        if 'is_banking_day' in cat_df.columns:
-            cat_df = cat_df[cat_df['is_banking_day']].copy()
-        cat_df = cat_df.sort_values('date').reset_index(drop=True)
-        
-        categories = ['AR', 'AP', 'PAYROLL', 'TAX', 'DEBT']
-        
-        for cat in categories:
-            if cat not in cat_df.columns:
-                continue
-            
-            non_zero_mask = cat_df[cat] > 0
-            non_zero_vals = cat_df.loc[non_zero_mask, cat]
-            
-            if len(non_zero_vals) < 5:
-                continue
-            
-            mean_val = non_zero_vals.mean()
-            std_val = non_zero_vals.std()
-            
-            self.category_stats[cat] = {'mean': mean_val, 'std': std_val, 'count': len(non_zero_vals)}
-            
-            if std_val == 0:
-                continue
-            
-            for idx in cat_df[non_zero_mask].index:
-                value = cat_df.loc[idx, cat]
-                z = (value - mean_val) / std_val
-                
-                if abs(z) >= self.MEDIUM_THRESHOLD:
-                    date = cat_df.loc[idx, 'date']
-                    day_name = date.day_name()
-                    severity = 'High' if abs(z) >= self.HIGH_THRESHOLD else 'Medium'
-                    cat_name = self.CATEGORY_NAMES.get(cat, cat)
-                    pct_diff = ((value - mean_val) / mean_val * 100) if mean_val != 0 else 0
-
-                    if z > 0:
-                        anomaly_type = f'{cat_name} Spike'
-                        description = f"{cat_name} — Actual: ${value:,.0f} vs Average: ${mean_val:,.0f} ({abs(pct_diff):.0f}% higher)"
-                        if cat == 'AR':
-                            action = "Verify large receipt. Update forecast if recurring."
-                        elif cat == 'AP':
-                            action = "Verify payment authorization. Check for duplicates."
-                        elif cat == 'PAYROLL':
-                            action = "Verify payroll calculation. Check for bonuses."
-                        else:
-                            action = "Investigate unusual amount."
+                if severity:
+                    if pct_diff < 0:
+                        alert_type = 'Low Inflow Forecast'
+                        description = f"Forecasted collections ${forecast_val:,.0f} is {abs(pct_diff)*100:.0f}% below typical {day_name} (${expected:,.0f})"
+                        action = "Verify expected customer payments. Follow up on outstanding invoices."
                     else:
-                        anomaly_type = f'{cat_name} Shortfall'
-                        description = f"{cat_name} — Actual: ${value:,.0f} vs Average: ${mean_val:,.0f} ({abs(pct_diff):.0f}% lower)"
-                        if cat == 'AR':
-                            action = "Follow up on delayed collections."
-                        elif cat == 'AP':
-                            action = "Verify all invoices processed."
-                        else:
-                            action = "Investigate shortfall."
+                        alert_type = 'High Inflow Forecast'
+                        description = f"Forecasted collections ${forecast_val:,.0f} is {abs(pct_diff)*100:.0f}% above typical {day_name} (${expected:,.0f})"
+                        action = "Confirm large incoming payments. Update investment strategy if recurring."
 
-                    outliers.append({
+                    alerts.append({
                         'date': date,
                         'day_name': day_name,
                         'severity': severity,
-                        'anomaly_type': anomaly_type,
+                        'severity_order': severity_order,
+                        'alert_type': alert_type,
                         'description': description,
                         'recommended_action': action,
-                        'z_score': round(z, 2),
-                        'value': value,
-                        'expected': mean_val,
+                        'forecast_value': forecast_val,
+                        'expected_value': expected,
                     })
-        
-        return outliers
-    
+
+        # Check outflow forecast
+        if 'forecast_outflow' in row:
+            forecast_val = row['forecast_outflow']
+            expected = self.historical_stats['outflow']['by_dow'].get(dow, self.historical_stats['outflow']['mean'])
+
+            if expected > 0:
+                pct_diff = (forecast_val - expected) / expected
+
+                if abs(pct_diff) >= self.DEVIATION_HIGH:
+                    severity = 'High'
+                    severity_order = 1
+                elif abs(pct_diff) >= self.DEVIATION_MEDIUM:
+                    severity = 'Medium'
+                    severity_order = 2
+                else:
+                    severity = None
+
+                if severity:
+                    if pct_diff > 0:
+                        alert_type = 'High Outflow Forecast'
+                        description = f"Forecasted payments ${forecast_val:,.0f} is {abs(pct_diff)*100:.0f}% above typical {day_name} (${expected:,.0f})"
+                        action = "Review scheduled payments. Ensure sufficient liquidity."
+                    else:
+                        alert_type = 'Low Outflow Forecast'
+                        description = f"Forecasted payments ${forecast_val:,.0f} is {abs(pct_diff)*100:.0f}% below typical {day_name} (${expected:,.0f})"
+                        action = "Verify all invoices are scheduled. Check for delayed payments."
+
+                    alerts.append({
+                        'date': date,
+                        'day_name': day_name,
+                        'severity': severity,
+                        'severity_order': severity_order,
+                        'alert_type': alert_type,
+                        'description': description,
+                        'recommended_action': action,
+                        'forecast_value': forecast_val,
+                        'expected_value': expected,
+                    })
+
+        # Check category-specific forecasts
+        for cat in ['PAYROLL', 'TAX', 'DEBT', 'CAPEX']:
+            if cat in row and row[cat] > 0 and cat in self.historical_stats:
+                forecast_val = row[cat]
+                expected = self.historical_stats[cat]['mean']
+
+                if expected > 0:
+                    pct_diff = (forecast_val - expected) / expected
+
+                    if pct_diff >= self.DEVIATION_HIGH:
+                        cat_name = self.CATEGORY_NAMES.get(cat, cat)
+                        alerts.append({
+                            'date': date,
+                            'day_name': day_name,
+                            'severity': 'High',
+                            'severity_order': 1,
+                            'alert_type': f'Large {cat_name} Payment',
+                            'description': f"{cat_name} ${forecast_val:,.0f} is {pct_diff*100:.0f}% above average (${expected:,.0f})",
+                            'recommended_action': f"Verify {cat_name.lower()} amount. Ensure sufficient balance.",
+                            'forecast_value': forecast_val,
+                            'expected_value': expected,
+                        })
+
+        return alerts
+
+    def _check_liquidity_risk(self, forecast_df):
+        """Check for days where projected balance falls below threshold."""
+        alerts = []
+
+        if 'closing_balance' not in forecast_df.columns:
+            return alerts
+
+        for _, row in forecast_df.iterrows():
+            balance = row['closing_balance']
+            date = row['date']
+            day_name = date.day_name() if hasattr(date, 'day_name') else pd.Timestamp(date).day_name()
+
+            if balance < self.LIQUIDITY_BUFFER:
+                shortage = self.LIQUIDITY_BUFFER - balance
+
+                if balance < 0:
+                    severity = 'High'
+                    severity_order = 0  # Highest priority
+                    alert_type = 'NEGATIVE BALANCE'
+                    action = "IMMEDIATE ACTION: Arrange funding or defer payments."
+                elif balance < self.LIQUIDITY_BUFFER * 0.5:
+                    severity = 'High'
+                    severity_order = 1
+                    alert_type = 'Critical Liquidity Risk'
+                    action = "Expedite collections or arrange credit facility."
+                else:
+                    severity = 'Medium'
+                    severity_order = 2
+                    alert_type = 'Liquidity Warning'
+                    action = "Monitor closely. Consider deferring non-critical payments."
+
+                alerts.append({
+                    'date': date,
+                    'day_name': day_name,
+                    'severity': severity,
+                    'severity_order': severity_order,
+                    'alert_type': alert_type,
+                    'description': f"Projected balance ${balance:,.0f} is ${shortage:,.0f} below ${self.LIQUIDITY_BUFFER/1e6:.0f}M buffer",
+                    'recommended_action': action,
+                    'forecast_value': balance,
+                    'expected_value': self.LIQUIDITY_BUFFER,
+                })
+
+        return alerts
+
+    def get_alerts(self):
+        """Get all detected alerts."""
+        return self.alerts_df
+
     def get_outliers(self):
-        return self.outliers_df
-    
+        """Alias for backward compatibility."""
+        return self.alerts_df
+
     def get_outlier_summary(self):
-        if self.results is None:
-            return {}
-        
-        total = len(self.results)
-        outlier_count = len(self.outliers_df) if self.outliers_df is not None else 0
-        
-        severity_counts = {}
-        type_counts = {}
-        if self.outliers_df is not None and len(self.outliers_df) > 0:
-            severity_counts = self.outliers_df['severity'].value_counts().to_dict()
-            type_counts = self.outliers_df['anomaly_type'].value_counts().to_dict()
-        
+        """Get summary of alerts."""
+        if self.alerts_df is None or len(self.alerts_df) == 0:
+            return {
+                'total_days': 0,
+                'outlier_count': 0,
+                'by_severity': {},
+                'by_type': {},
+            }
+
         return {
-            'total_days': total,
-            'outlier_count': outlier_count,
-            'outlier_rate': outlier_count / total * 100 if total > 0 else 0,
-            'by_severity': severity_counts,
-            'by_type': type_counts,
-            'net_flow_stats': self.net_flow_stats,
-            'category_stats': self.category_stats,
+            'total_days': len(self.alerts_df['date'].unique()),
+            'outlier_count': len(self.alerts_df),
+            'by_severity': self.alerts_df['severity'].value_counts().to_dict(),
+            'by_type': self.alerts_df['alert_type'].value_counts().to_dict(),
         }
-    
-    def get_actionable_report(self):
-        if self.outliers_df is None or len(self.outliers_df) == 0:
-            return "No actionable outliers detected. Cash flows are within normal ranges."
-        
-        summary = self.get_outlier_summary()
-        
-        report = f"""
-ACTIONABLE OUTLIER REPORT
-{'='*50}
 
-Summary:
-- Total Banking Days Analyzed: {summary['total_days']}
-- Outliers Requiring Attention: {summary['outlier_count']}
-- High Severity: {summary['by_severity'].get('High', 0)}
-- Medium Severity: {summary['by_severity'].get('Medium', 0)}
 
-"""
-        
-        high_outliers = self.outliers_df[self.outliers_df['severity'] == 'High']
-        if len(high_outliers) > 0:
-            report += "HIGH PRIORITY ITEMS:\n"
-            report += "-" * 50 + "\n"
-            for _, row in high_outliers.iterrows():
-                report += f"\n{row['date'].strftime('%Y-%m-%d')} ({row['day_name']})\n"
-                report += f"  Type: {row['anomaly_type']}\n"
-                report += f"  {row['description']}\n"
-                report += f"  Action: {row['recommended_action']}\n"
-        
-        med_outliers = self.outliers_df[self.outliers_df['severity'] == 'Medium']
-        if len(med_outliers) > 0:
-            report += "\nMEDIUM PRIORITY ITEMS:\n"
-            report += "-" * 50 + "\n"
-            for _, row in med_outliers.iterrows():
-                report += f"\n{row['date'].strftime('%Y-%m-%d')} ({row['day_name']})\n"
-                report += f"  Type: {row['anomaly_type']}\n"
-                report += f"  {row['description']}\n"
-                report += f"  Action: {row['recommended_action']}\n"
-        
-        return report
+# Backward compatibility alias
+OutlierDetector = ForecastAlertDetector
 
 
 class SHAPAnalyzer:
     """SHAP analysis for forecast interpretability."""
-    
+
     def __init__(self, forecaster):
         self.forecaster = forecaster
         self.results = {}
-    
+
     def analyze(self):
         if not self.forecaster.is_fitted:
             return {}
-        
+
         results = {}
         if self.forecaster.inflow_model is not None:
             results['inflow'] = self._analyze_model(self.forecaster.inflow_model, 'inflow')
         if self.forecaster.outflow_model is not None:
             results['outflow'] = self._analyze_model(self.forecaster.outflow_model, 'outflow')
-        
+
         self.results = results
         return results
-    
+
     def _analyze_model(self, model, name):
         import pandas as pd
         training_dates = self.forecaster.training_data['date'].tail(30)
         future_df = pd.DataFrame({'ds': training_dates})
         forecast = model.predict(future_df)
-        
+
         skip_cols = ['ds', 'yhat', 'yhat_lower', 'yhat_upper', 'trend_lower', 'trend_upper',
                     'additive_terms', 'additive_terms_lower', 'additive_terms_upper',
                     'multiplicative_terms', 'multiplicative_terms_lower', 'multiplicative_terms_upper']
         component_cols = [col for col in forecast.columns if col not in skip_cols]
-        
+
         importance = {}
         for col in component_cols:
             if col in forecast.columns:
                 importance[col] = abs(forecast[col]).mean()
-        
+
         total = sum(importance.values()) or 1
         importance_pct = {k: v/total * 100 for k, v in importance.items()}
-        
+
         importance_df = pd.DataFrame([
             {'component': k, 'importance': v, 'importance_pct': importance_pct[k]}
             for k, v in sorted(importance.items(), key=lambda x: x[1], reverse=True)
         ])
-        
+
         return {'importance': importance_df, 'raw_importance': importance}

@@ -109,11 +109,19 @@ def auto_load_data():
     shap_analyzer = SHAPAnalyzer(live_forecaster)
     st.session_state.shap_results = shap_analyzer.analyze()
 
-    outlier_detector = OutlierDetector()
-    outlier_detector.detect(st.session_state.daily_cash.copy(), st.session_state.category_df)
-    st.session_state.outlier_detector = outlier_detector
-    st.session_state.outlier_results = outlier_detector.results
-    st.session_state.outlier_summary = outlier_detector.get_outlier_summary()
+    # Forward-looking alert detection on FORECASTED data
+    # Use T+7 forecast (or longest available horizon) for actionable alerts
+    forecast_horizon = 'T+7' if 'T+7' in live_forecasts else list(live_forecasts.keys())[0]
+    forecast_df = live_forecasts[forecast_horizon]
+    alert_detector = OutlierDetector()
+    alert_detector.detect(
+        forecast_df=forecast_df,
+        historical_df=st.session_state.daily_cash,
+        category_df=st.session_state.category_df
+    )
+    st.session_state.outlier_detector = alert_detector
+    st.session_state.outlier_results = alert_detector.results
+    st.session_state.outlier_summary = alert_detector.get_outlier_summary()
 
     st.session_state.data_loaded = True
     st.session_state.last_loaded_date = today

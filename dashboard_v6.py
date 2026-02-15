@@ -84,9 +84,18 @@ def auto_load_data():
 
     shap_analyzer = SHAPAnalyzer(live_forecaster)
     st.session_state.shap_results = shap_analyzer.analyze()
-    outlier_detector = OutlierDetector()
-    outlier_detector.detect(st.session_state.daily_cash.copy(), st.session_state.category_df)
-    st.session_state.outlier_detector = outlier_detector
+
+    # Forward-looking alert detection on FORECASTED data
+    # Use T+7 forecast (or longest available horizon) for actionable alerts
+    forecast_horizon = 'T+7' if 'T+7' in live_forecasts else list(live_forecasts.keys())[0]
+    forecast_df = live_forecasts[forecast_horizon]
+    alert_detector = OutlierDetector()
+    alert_detector.detect(
+        forecast_df=forecast_df,
+        historical_df=st.session_state.daily_cash,
+        category_df=st.session_state.category_df
+    )
+    st.session_state.outlier_detector = alert_detector
     st.session_state.data_loaded = True
     st.session_state.last_loaded_date = today
 
@@ -957,16 +966,20 @@ def render_outliers():
     if not st.session_state.data_loaded:
         st.info("Loading data...")
         return
+
+    st.subheader("Upcoming Alerts")
+    st.caption("Forward-looking alerts based on forecasted cash flows for the next 7 days")
+
     outlier_detector = st.session_state.outlier_detector
     summary = outlier_detector.get_outlier_summary()
-    outliers_df = outlier_detector.get_outliers()
+    alerts_df = outlier_detector.get_alerts()
 
     # Summary metrics
     col1, col2, col3, col4 = st.columns(4)
     with col1:
-        st.metric("Days Analyzed", summary.get('total_days', 0))
+        st.metric("Forecast Days", summary.get('total_days', 0))
     with col2:
-        st.metric("Outliers Found", summary.get('outlier_count', 0))
+        st.metric("Alerts", summary.get('outlier_count', 0))
     with col3:
         st.metric("High Priority", summary.get('by_severity', {}).get('High', 0))
     with col4:
@@ -974,24 +987,24 @@ def render_outliers():
 
     st.markdown("---")
 
-    if outliers_df is not None and len(outliers_df) > 0:
-        st.subheader("Items Requiring Attention")
-
+    if alerts_df is not None and len(alerts_df) > 0:
         for sev in ['High', 'Medium']:
-            sev_df = outliers_df[outliers_df['severity'] == sev]
+            sev_df = alerts_df[alerts_df['severity'] == sev]
             if len(sev_df) == 0:
                 continue
 
             icon = "🔴" if sev == 'High' else "🟡"
-            st.markdown(f"#### {icon} {sev} Priority ({len(sev_df)} items)")
+            st.markdown(f"#### {icon} {sev} Priority ({len(sev_df)} alerts)")
 
             for _, row in sev_df.iterrows():
                 # Calculate variance for display
-                variance = row['value'] - row['expected']
-                variance_pct = (variance / abs(row['expected']) * 100) if row['expected'] != 0 else 0
+                forecast_val = row['forecast_value']
+                expected_val = row['expected_value']
+                variance = forecast_val - expected_val
+                variance_pct = (variance / abs(expected_val) * 100) if expected_val != 0 else 0
 
                 with st.expander(
-                    f"{row['date'].strftime('%b %d, %Y')} ({row['day_name']}) — {row['anomaly_type']}",
+                    f"{row['date'].strftime('%b %d, %Y')} ({row['day_name']}) — {row['alert_type']}",
                     expanded=(sev == 'High')
                 ):
                     # Description
@@ -1000,9 +1013,9 @@ def render_outliers():
                     # Metrics row
                     c1, c2, c3 = st.columns(3)
                     with c1:
-                        st.metric("Actual Amount", f"${row['value']:,.0f}")
+                        st.metric("Forecasted", f"${forecast_val:,.0f}")
                     with c2:
-                        st.metric("Expected Amount", f"${row['expected']:,.0f}")
+                        st.metric("Typical", f"${expected_val:,.0f}")
                     with c3:
                         delta_color = "inverse" if variance < 0 else "normal"
                         st.metric(
@@ -1013,9 +1026,9 @@ def render_outliers():
                         )
 
                     # Action
-                    st.info(f"**Recommended Action:** {row['recommended_action']}")
+                    st.warning(f"**Action Required:** {row['recommended_action']}")
     else:
-        st.success("No outliers detected. All cash flows are within normal ranges.")
+        st.success("No alerts for the upcoming forecast period. Cash flows are within expected ranges.")
 
 def main():
     init_session_state()
